@@ -9,6 +9,7 @@ add_library(overlay SHARED
   render/backend.cpp
   render/dx11.cpp
   render/dx12.cpp
+  render/textures.cpp
   script/script.cpp
   ui/canvas.cpp
   ui/menu.cpp
@@ -24,7 +25,7 @@ target_include_directories(overlay PUBLIC
 target_include_directories(overlay PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 target_compile_definitions(overlay PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE OVERLAY_BUILD)
-target_link_libraries(overlay PRIVATE imgui minhook yyjson Luau.VM Luau.Compiler d3d12)
+target_link_libraries(overlay PRIVATE imgui minhook yyjson Luau.VM Luau.Compiler d3d12 windowscodecs)
 
 set_target_properties(overlay PROPERTIES
   OUTPUT_NAME overlay

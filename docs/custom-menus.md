@@ -72,7 +72,7 @@ label.Text = "target"
 label.Color = Color3.new(1, 1, 1)
 ```
 
-- Kinds: `Line` (`From`, `To`), `Text` (`Position`, `Text`, `Size`, `Center`, `Outline`), `Circle` (`Position`, `Radius`, `Filled`), `Square` (`Position`, `Size`, `Filled`), `Triangle` (`PointA`, `PointB`, `PointC`, `Filled`). `Image` is not supported yet.
+- Kinds: `Line` (`From`, `To`), `Text` (`Position`, `Text`, `Size`, `Center`, `Outline`), `Circle` (`Position`, `Radius`, `Filled`), `Square` (`Position`, `Size`, `Filled`), `Triangle` (`PointA`, `PointB`, `PointC`, `Filled`), `Image` (`Data` path, `Position`, `Size`). Images decode via Windows WIC; relative paths resolve against the scripts folder, and the cache self-heals across device loss. DX12 images are skipped for now.
 - Common properties: `Visible`, `ZIndex`, `Color` (Color3 or hex string), `Transparency` (0..1), `Thickness`, `:Remove()` / `:Destroy()`.
 - `Vector2.new(x, y)` and `Color3.new/fromRGB/fromHSV` are provided by the sandbox; `Color3` values are 0..1. Coordinates are raw target-client pixels.
 - Drawing objects are cleared on script reload.

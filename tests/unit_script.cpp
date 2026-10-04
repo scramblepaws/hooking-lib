@@ -39,6 +39,7 @@ class MockCanvas : public overlay::ui::Canvas {
   void fill_triangle(overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Color) override {
     triangles++;
   }
+  void image(void*, const overlay::ui::Rect&, overlay::ui::Color) override { images++; }
   void text(overlay::ui::Vec2, overlay::ui::Color, const char*) override { texts++; }
   void text_sized(overlay::ui::Vec2, overlay::ui::Color, float, const char*) override { texts++; }
   void text_centered(const overlay::ui::Rect&, overlay::ui::Color, const char*) override { texts++; }
@@ -49,6 +50,7 @@ class MockCanvas : public overlay::ui::Canvas {
   int lines = 0;
   int triangles = 0;
   int texts = 0;
+  int images = 0;
 };
 
 }  // namespace
@@ -179,6 +181,24 @@ int main() {
   check(drawing_mock.lines == 1, "line drawn");
   check(drawing_mock.texts == 5, "outlined text drawn as 4 offsets plus main");
   check(drawing_mock.rects == 1, "filled square drawn");
+
+  // Drawing images go through the texture provider seam.
+  script::set_texture_provider(+[](const char*) -> void* { return reinterpret_cast<void*>(0x1234); });
+  check(script::execute(R"(
+    local page = ui.page("H6", "R")
+    local section = ui.section(page, "S")
+    local picture = Drawing.new("Image")
+    picture.Visible = true
+    picture.Position = Vector2.new(5, 5)
+    picture.Size = Vector2.new(50, 50)
+    picture.Data = "whatever.png"
+    if picture.Data ~= "whatever.png" then error("Data read back wrong") end
+  )",
+                           "image"), "image chunk runs");
+  MockCanvas image_mock;
+  script::render_drawing(image_mock);
+  check(image_mock.images == 1, "image drawn through provider");
+  script::set_texture_provider(nullptr);
 
   if (g_failures == 0) {
     std::printf("unit_script: all checks passed\n");

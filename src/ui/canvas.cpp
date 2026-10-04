@@ -50,6 +50,11 @@ class ImCanvas : public Canvas {
     draw_list_->AddTriangleFilled(to_im(a), to_im(b), to_im(c), to_u32(color));
   }
 
+  void image(void* texture, const Rect& rect, Color tint) override {
+    draw_list_->AddImage(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(texture)),
+                         to_im({rect.x, rect.y}), im_max(rect), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), to_u32(tint));
+  }
+
   void text(Vec2 pos, Color color, const char* text) override {
     draw_list_->AddText(to_im(pos), to_u32(color), text);
   }

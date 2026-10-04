@@ -15,6 +15,7 @@
 
 #include "render/dx11.h"
 #include "render/dx12.h"
+#include "render/textures.h"
 #include "script/script.h"
 #include "ui/menu.h"
 
@@ -88,6 +89,7 @@ bool init(IDXGISwapChain* sc, void* hwnd) {
 
   ui::init(ui_scale(hwnd));
   script::start();
+  script::set_texture_provider(&texture_for);
   g_ready = true;
   log("render backend: %s", g_api == Api::Dx11 ? "dx11" : "dx12");
   return true;
@@ -132,6 +134,8 @@ void shutdown() {
   if (!g_ready) return;
   g_ready = false;
   ui::save_active_config();
+  script::set_texture_provider(nullptr);
+  release_textures();
   switch (g_api) {
     case Api::Dx11: dx11::shutdown(); break;
     case Api::Dx12: dx12::shutdown(); break;

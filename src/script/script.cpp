@@ -49,6 +49,7 @@ struct Sleeper {
 std::vector<Sleeper> g_sleepers;
 std::map<std::string, int> g_click_refs;
 std::vector<int> g_painter_refs;
+void* (*g_texture_provider)(const char*) = nullptr;
 char* g_spawn_bytecode = nullptr;
 size_t g_spawn_size = 0;
 
@@ -665,6 +666,7 @@ enum class DrawKind {
   Circle,
   Square,
   Triangle,
+  Image,
 };
 
 struct DrawingObject {
@@ -681,6 +683,7 @@ struct DrawingObject {
   bool center = true;
   bool outline = false;
   std::string text;
+  std::string data;
 };
 std::vector<DrawingObject*> g_drawings;
 
@@ -755,7 +758,7 @@ int l_drawing_new(lua_State* state) {
   else if (std::strcmp(kind, "Triangle") == 0)
     parsed = DrawKind::Triangle;
   else if (std::strcmp(kind, "Image") == 0)
-    luaL_error(state, "Drawing: Image is not supported yet");
+    parsed = DrawKind::Image;
   else
     luaL_error(state, "Drawing: unknown kind '%s'", kind);
 
@@ -816,6 +819,8 @@ int l_drawing_index(lua_State* state) {
     lua_pushboolean(state, object->outline ? 1 : 0);
   } else if (std::strcmp(key, "Text") == 0) {
     lua_pushstring(state, object->text.c_str());
+  } else if (std::strcmp(key, "Data") == 0) {
+    lua_pushstring(state, object->data.c_str());
   } else if (std::strcmp(key, "Size") == 0) {
     if (object->kind == DrawKind::Text)
       lua_pushnumber(state, object->text_size);
@@ -866,6 +871,8 @@ int l_drawing_newindex(lua_State* state) {
     object->outline = lua_toboolean(state, 3) != 0;
   } else if (std::strcmp(key, "Text") == 0) {
     object->text = luaL_checkstring(state, 3);
+  } else if (std::strcmp(key, "Data") == 0) {
+    object->data = luaL_checkstring(state, 3);
   } else if (std::strcmp(key, "Size") == 0) {
     if (object->kind == DrawKind::Text)
       object->text_size = static_cast<float>(luaL_checknumber(state, 3));
@@ -1215,6 +1222,8 @@ bool execute(const char* source, const char* chunk_name) {
 
 void request_reload() { g_reload_pending = true; }
 
+void set_texture_provider(void* (*provider)(const char*)) { g_texture_provider = provider; }
+
 void render_drawing(overlay::ui::Canvas& canvas) {
   if (g_drawings.empty()) return;
   std::vector<DrawingObject*> ordered = g_drawings;
@@ -1270,6 +1279,13 @@ void render_drawing(overlay::ui::Canvas& canvas) {
           canvas.text_sized({position.x, position.y + 1.0f}, outline, object->text_size, object->text.c_str());
         }
         canvas.text_sized(position, color, object->text_size, object->text.c_str());
+        break;
+      }
+      case DrawKind::Image: {
+        if (!g_texture_provider || object->data.empty()) break;
+        void* texture = g_texture_provider(object->data.c_str());
+        if (!texture) break;
+        canvas.image(texture, {object->position.x, object->position.y, object->size.x, object->size.y}, color);
         break;
       }
     }

@@ -28,6 +28,8 @@ bool make_target(IDXGISwapChain* sc) {
 
 }  // namespace
 
+ID3D11Device* device() { return g_device; }
+
 bool create_target(IDXGISwapChain* sc) { return make_target(sc); }
 
 void release_target() {

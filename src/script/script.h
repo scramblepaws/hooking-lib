@@ -21,4 +21,8 @@ void request_reload();
 // Paints script Drawing objects (ESP primitives) into the given canvas.
 void render_drawing(overlay::ui::Canvas& canvas);
 
+// Backends install a texture resolver so Drawing images can be decoded and
+// uploaded; without one, image objects are skipped.
+void set_texture_provider(void* (*provider)(const char* path));
+
 }  // namespace overlay::script

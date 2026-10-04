@@ -41,6 +41,7 @@ class Canvas {
   virtual void stroke_circle(Vec2 center, float radius, Color color, float thickness = 1.0f) = 0;
   virtual void stroke_line(Vec2 a, Vec2 b, Color color, float thickness = 1.0f) = 0;
   virtual void fill_triangle(Vec2 a, Vec2 b, Vec2 c, Color color) = 0;
+  virtual void image(void* texture, const Rect& rect, Color tint) = 0;
   virtual void text(Vec2 pos, Color color, const char* text) = 0;
   virtual void text_sized(Vec2 pos, Color color, float size, const char* text) = 0;
   virtual void text_centered(const Rect& rect, Color color, const char* text) = 0;
