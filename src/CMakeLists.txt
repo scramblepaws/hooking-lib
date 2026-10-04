@@ -4,6 +4,7 @@ add_library(overlay SHARED
   core/log.cpp
   core/overlay.cpp
   core/paths.cpp
+  external/external.cpp
   hook/hook.cpp
   render/backend.cpp
   render/dx11.cpp

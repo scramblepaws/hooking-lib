@@ -10,6 +10,7 @@
 #include "core/config.h"
 #include "core/log.h"
 #include "core/state.h"
+#include "external/external.h"
 #include "hook/hook.h"
 #include "overlay/overlay.h"
 #include "script/script.h"
@@ -59,6 +60,9 @@ const char* overlay_version_string(void) {
 
 OverlayStatus overlay_init(const OverlayInitInfo* info) {
   if (!info || info->size < sizeof(OverlayInitInfo)) return OVERLAY_ERR_INVALID_ARGUMENT;
+  overlay::claim_host_init();
+  if (info->flags & OVERLAY_FLAG_EXTERNAL)
+    return overlay::external::start(info->target_hwnd) ? OVERLAY_OK : OVERLAY_ERR_BACKEND_UNAVAILABLE;
   if (info->backend != OVERLAY_BACKEND_AUTO && info->backend != OVERLAY_BACKEND_DX11)
     return OVERLAY_ERR_BACKEND_UNAVAILABLE;
   switch (overlay::init()) {
@@ -74,10 +78,14 @@ OverlayStatus overlay_init(const OverlayInitInfo* info) {
 }
 
 OverlayStatus overlay_shutdown(void) {
+  if (overlay::external::running()) {
+    overlay::external::stop();
+    return OVERLAY_OK;
+  }
   return overlay::shutdown() == overlay::Status::ok ? OVERLAY_OK : OVERLAY_ERR_NOT_INITIALIZED;
 }
 
-int overlay_is_ready(void) { return overlay::running() ? 1 : 0; }
+int overlay_is_ready(void) { return (overlay::external::running() || overlay::running()) ? 1 : 0; }
 
 int overlay_set_menu_open(int open) {
   overlay::state().menu_open.store(open != 0);

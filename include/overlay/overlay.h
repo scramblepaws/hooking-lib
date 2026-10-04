@@ -19,4 +19,8 @@ Status shutdown();
 // True once the renderer has initialized on a Target swapchain.
 bool running();
 
+// Host-linked builds: claims initialization so the automatic injected-mode
+// startup stands down. Called by the C API entry points.
+void claim_host_init();
+
 }  // namespace overlay

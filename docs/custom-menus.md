@@ -6,6 +6,12 @@ For the public product surface, see `include/overlay/overlay_c.h` and the `examp
 
 Configs are named JSON snapshots keyed by widget `id`, stored in `<dll dir>/configs/<name>.json`. `overlay_config_save/load/delete/list` expose them through the C ABI; the starter menu's Configs page wires a name field to Save/Load, and eject autosaves the active config.
 
+## External mode
+
+`overlay_init` with `OVERLAY_FLAG_EXTERNAL` skips hooking entirely: the library creates its own topmost, color-keyed window (over `target_hwnd`'s client area, or the primary monitor) and runs the UI and script stack on its own thread. The window is click-through while the menu is closed and becomes interactive (focus + cursor) while it is open; `Del` toggles, `End` shuts the overlay down. See `examples/external_host`. Menu content comes from the scripts folder (or `overlay_script_execute`); `overlay_shutdown()` stops the thread.
+
+Note for host-linked applications: auto-init in `DllMain` waits briefly for a host to claim initialization, so calling any `overlay_init` entry point from `main()` always wins over injected-mode startup.
+
 Styling is a CSS subset loaded from `assets/theme.css` (or `overlay_style_load`/`overlay_style_parse`). `menu {}` sets global colors, `class {}` a widget class (`toggle`, `slider`, `dropdown`, `checkbox`, `keybind`, `text-input`, `color-picker`, `button`), `#id {}` one widget instance; id beats class beats menu. Properties: `accent`, `track`, `knob`, `text`, `text-dim`, `panel`, `border`, `window-bg`, `row-hover`, `nav-selected`, `button`, `button-hover`, `field`, `rounding`. Values: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(r,g,b)`, `rgba(r,g,b,a)`.
 
 ```css

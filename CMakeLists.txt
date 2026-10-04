@@ -30,6 +30,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps.cmake)
 add_subdirectory(src)
 add_subdirectory(examples/test_app)
 add_subdirectory(examples/sdk_consumer)
+add_subdirectory(examples/external_host)
 add_subdirectory(tools/injector)
 add_subdirectory(tests)
 

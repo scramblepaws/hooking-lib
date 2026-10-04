@@ -25,6 +25,14 @@ extern "C" {
 /* Incremented on any ABI-breaking change. Stable from 1.0 onward. */
 #define OVERLAY_ABI_VERSION 0u
 
+/*
+ * OverlayInitInfo.flags:
+ * OVERLAY_FLAG_EXTERNAL creates the overlay's own topmost, click-through
+ * window instead of hooking a Target. `target_hwnd` optionally sizes it to
+ * that window; otherwise it covers the primary monitor.
+ */
+#define OVERLAY_FLAG_EXTERNAL 0x00000001u
+
 typedef struct OverlayContext OverlayContext;
 typedef struct OverlayMenu OverlayMenu;
 typedef struct OverlayPage OverlayPage;

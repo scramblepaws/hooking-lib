@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <mutex>
 
 #include "core/log.h"
@@ -9,6 +10,29 @@
 #include "hook/hook.h"
 
 namespace overlay {
+
+namespace {
+
+HANDLE g_host_event = nullptr;
+std::atomic<bool> g_host_claimed{false};
+
+DWORD WINAPI init_thread(LPVOID) {
+  // Host-linked applications call an overlay_init entry point from main().
+  // Give them a moment to claim; injected builds fall through to hook install.
+  if (g_host_event && WaitForSingleObject(g_host_event, 750) == WAIT_OBJECT_0 && g_host_claimed.load()) {
+    log("auto-init skipped (host manages init)");
+    return 0;
+  }
+  init();
+  return 0;
+}
+
+}  // namespace
+
+void claim_host_init() {
+  g_host_claimed.store(true);
+  if (g_host_event) SetEvent(g_host_event);
+}
 
 State& state() {
   static State s;
@@ -38,19 +62,11 @@ bool running() { return state().render_ready.load(); }
 
 }  // namespace overlay
 
-namespace {
-
-DWORD WINAPI init_thread(LPVOID) {
-  overlay::init();
-  return 0;
-}
-
-}  // namespace
-
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
   if (reason == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(instance);
-    CreateThread(nullptr, 0, &init_thread, nullptr, 0, nullptr);
+    overlay::g_host_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CreateThread(nullptr, 0, &overlay::init_thread, nullptr, 0, nullptr);
   }
   return TRUE;
 }

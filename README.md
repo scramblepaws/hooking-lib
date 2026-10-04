@@ -18,6 +18,7 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 - Stylesheet layer: CSS subset (`menu {}`, `class {}`, `#id {}`) for colors and rounding; the shipped look is `assets/theme.css`
 - Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. `scripts/starter.lua` builds the shipped menu; the C++ starter remains the fallback when the folder is empty
 - Drawing API: script ESP primitives (`Drawing.new` for Line/Text/Circle/Square/Triangle) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game
+- External mode: `overlay_init` with `OVERLAY_FLAG_EXTERNAL` gives the library its own topmost, click-through, color-keyed window over a target (or the primary monitor), running the same UI and script stack on its own thread. No injection, no hooks
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
 - Frame log at `build/bin/overlay.log`
@@ -27,7 +28,6 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 - Drawing `Image` kind (the other primitives are supported)
 - Vulkan backend
 - DX12 attach: the renderer and a DX12 test target exist, but capturing the target's present command queue is unsolved in this build, so the overlay stays dormant on DX12 targets (safe no-op, no crash). DX11 is the supported backend
-- External (non-injected) mode
 
 ## Requirements
 
@@ -46,8 +46,9 @@ cmake --build build
 Outputs (in `build/bin/`):
 
 - `overlay.dll` - the injected overlay
-- `test_target.exe` - minimal DX11 window to inject into
+- `test_target.exe` - minimal DX11 window to inject into (`--dx12` for the DX12 target)
 - `sdk_consumer.exe` - public-API example: links the DLL, builds a custom menu, blank-mode chrome
+- `external_host.exe` - external mode: topmost click-through overlay over the primary monitor; scripts build the menu; Del toggles, End exits
 - `injector.exe` - remote LoadLibrary injector
 - `assets/fonts/` - Roboto + Font Awesome, copied automatically per build
 
