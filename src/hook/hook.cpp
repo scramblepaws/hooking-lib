@@ -28,12 +28,20 @@ namespace {
 using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using ResizeFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 using CreateSwapChainFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**);
+using CreateFactory1Fn = HRESULT(STDMETHODCALLTYPE*)(REFIID, void**);
+using CreateFactory2Fn = HRESULT(STDMETHODCALLTYPE*)(UINT, REFIID, void**);
+using D3D12CreateDeviceFn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+using CreateQueueFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_COMMAND_QUEUE_DESC*, REFIID, void**);
 using CreateSwapChainForHwndFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
 
 PresentFn g_present = nullptr;
 ResizeFn g_resize = nullptr;
 CreateSwapChainFn g_create_swapchain = nullptr;
 CreateSwapChainForHwndFn g_create_swapchain_hwnd = nullptr;
+CreateFactory1Fn g_create_factory1 = nullptr;
+CreateFactory2Fn g_create_factory2 = nullptr;
+D3D12CreateDeviceFn g_d3d12_create_device = nullptr;
+CreateQueueFn g_create_queue = nullptr;
 WNDPROC g_wndproc = nullptr;
 HWND g_hwnd = nullptr;
 HANDLE g_eject_event = nullptr;
@@ -187,12 +195,22 @@ void eject_worker(HMODULE self) {
   FreeLibraryAndExitThread(self, 0);
 }
 
+void capture_queue(ID3D12CommandQueue* queue, bool authoritative) {
+  if (!queue) return;
+  D3D12_COMMAND_QUEUE_DESC desc = {};
+  queue->GetDesc(&desc);
+  if (desc.Type != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
+  if (!authoritative && state().dx12_queue.load()) return;  // first created wins (ours is created later)
+  if (!state().dx12_queue.load()) log("dx12: present queue captured");
+  state().dx12_queue.store(queue);
+}
+
 void capture_dx12_queue(IUnknown* device) {
-  if (!device || state().dx12_queue.load()) return;
+  if (!device) return;
   ID3D12CommandQueue* queue = nullptr;
   if (SUCCEEDED(device->QueryInterface(__uuidof(ID3D12CommandQueue), reinterpret_cast<void**>(&queue))) && queue) {
-    state().dx12_queue.store(queue);
-    log("dx12: present queue captured");
+    capture_queue(queue, true);
+    queue->Release();
   }
 }
 
@@ -211,6 +229,87 @@ HRESULT STDMETHODCALLTYPE hk_create_swapchain_hwnd(IDXGIFactory2* factory, IUnkn
   if (!g_shutting_down.load()) capture_dx12_queue(device);
   return g_create_swapchain_hwnd(factory, device, hwnd, desc, fullscreen, output, out);
 }
+
+HRESULT STDMETHODCALLTYPE hk_create_queue(ID3D12Device* device, const D3D12_COMMAND_QUEUE_DESC* desc, REFIID iid,
+                                          void** out);
+
+// D3D12 objects expose per-instance stubs that MinHook cannot safely patch,
+// so these entries are swapped in the object's own vtable instead.
+bool hook_vtable_entry(void** vtbl, int index, void* detour, void** original) {
+  DWORD old_protect = 0;
+  if (!VirtualProtect(&vtbl[index], sizeof(void*), PAGE_EXECUTE_READWRITE, &old_protect)) return false;
+  *original = vtbl[index];
+  vtbl[index] = detour;
+  VirtualProtect(&vtbl[index], sizeof(void*), old_protect, &old_protect);
+  return true;
+}
+
+void hook_target_device(ID3D12Device* device) {
+  // ID3D12Device : ID3D12Object with slots 3-5 Get/SetPrivateData, 6 SetName,
+  // 7 GetNodeCount, so CreateCommandQueue is slot 8.
+  void** vtbl = *reinterpret_cast<void***>(device);
+  void* original = nullptr;
+  if (hook_vtable_entry(vtbl, 8, reinterpret_cast<void*>(&hk_create_queue), &original))
+    g_create_queue = reinterpret_cast<CreateQueueFn>(original);
+  else
+    log("dx12: device vtable hook failed");
+}
+
+void hook_target_factory(IUnknown* unknown) {
+  IDXGIFactory2* factory = nullptr;
+  if (!unknown ||
+      FAILED(unknown->QueryInterface(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory))) ||
+      !factory)
+    return;
+  void** vtbl = *reinterpret_cast<void***>(factory);
+  void* original = nullptr;
+  if (hook_vtable_entry(vtbl, 9, reinterpret_cast<void*>(&hk_create_swapchain), &original))
+    g_create_swapchain = reinterpret_cast<CreateSwapChainFn>(original);
+  if (hook_vtable_entry(vtbl, 14, reinterpret_cast<void*>(&hk_create_swapchain_hwnd), &original))
+    g_create_swapchain_hwnd = reinterpret_cast<CreateSwapChainForHwndFn>(original);
+  factory->Release();
+}
+
+HRESULT STDMETHODCALLTYPE hk_create_queue(ID3D12Device* device, const D3D12_COMMAND_QUEUE_DESC* desc, REFIID iid,
+                                          void** out) {
+  InFlightGuard guard;
+  const HRESULT hr = g_create_queue(device, desc, iid, out);
+  if (!g_shutting_down.load() && SUCCEEDED(hr) && out && *out && desc &&
+      desc->Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
+    capture_queue(static_cast<ID3D12CommandQueue*>(*out), false);
+  return hr;
+}
+
+HRESULT STDMETHODCALLTYPE hk_create_factory1(REFIID iid, void** out) {
+  InFlightGuard guard;
+  const HRESULT hr = g_create_factory1(iid, out);
+  if (SUCCEEDED(hr) && out && *out) hook_target_factory(static_cast<IUnknown*>(*out));
+  return hr;
+}
+
+HRESULT STDMETHODCALLTYPE hk_create_factory2(UINT flags, REFIID iid, void** out) {
+  InFlightGuard guard;
+  const HRESULT hr = g_create_factory2(flags, iid, out);
+  if (SUCCEEDED(hr) && out && *out) hook_target_factory(static_cast<IUnknown*>(*out));
+  return hr;
+}
+
+HRESULT STDMETHODCALLTYPE hk_d3d12_create_device(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFIID iid, void** out) {
+  InFlightGuard guard;
+  const HRESULT hr = g_d3d12_create_device(adapter, level, iid, out);
+  if (SUCCEEDED(hr) && out && *out) {
+    ID3D12Device* device = nullptr;
+    if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(__uuidof(ID3D12Device),
+                                                               reinterpret_cast<void**>(&device))) &&
+        device) {
+      hook_target_device(device);
+      device->Release();
+    }
+  }
+  return hr;
+}
+
+void hook_target_device(ID3D12Device* device);
 
 HRESULT STDMETHODCALLTYPE hk_resize(IDXGISwapChain* sc, UINT count, UINT width, UINT height, DXGI_FORMAT format, UINT flags) {
   InFlightGuard guard;
@@ -331,24 +430,6 @@ bool create_hooks() {
   const MH_STATUS s2 = MH_CreateHook(vtbl[13], reinterpret_cast<LPVOID>(&hk_resize), reinterpret_cast<LPVOID*>(&g_resize));
   const MH_STATUS s3 = MH_EnableHook(MH_ALL_HOOKS);
 
-  IDXGIFactory4* factory = nullptr;
-  if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory4), reinterpret_cast<void**>(&factory))) && factory) {
-    const IID* interfaces[] = {&__uuidof(IDXGIFactory), &__uuidof(IDXGIFactory1), &__uuidof(IDXGIFactory2),
-                               &__uuidof(IDXGIFactory3), &__uuidof(IDXGIFactory4)};
-    for (const IID* iid : interfaces) {
-      void* iface = nullptr;
-      if (FAILED(factory->QueryInterface(*iid, &iface)) || !iface) continue;
-      void** factory_vtbl = *reinterpret_cast<void***>(iface);
-      MH_CreateHook(factory_vtbl[9], reinterpret_cast<LPVOID>(&hk_create_swapchain),
-                    reinterpret_cast<LPVOID*>(&g_create_swapchain));
-      MH_CreateHook(factory_vtbl[14], reinterpret_cast<LPVOID>(&hk_create_swapchain_hwnd),
-                    reinterpret_cast<LPVOID*>(&g_create_swapchain_hwnd));
-      reinterpret_cast<IUnknown*>(iface)->Release();
-    }
-    MH_EnableHook(MH_ALL_HOOKS);
-    factory->Release();
-  }
-
   sc->Release();
   device->Release();
   ctx->Release();
@@ -360,6 +441,24 @@ bool create_hooks() {
     return false;
   }
   return true;
+}
+
+// Exports that create the objects whose per-instance functions we need to hook
+// to find the Target's DX12 present queue. Requires the DLL to be present
+// before the Target creates its device (early injection / host mode).
+void create_d3d12_capture_hooks() {
+  if (HMODULE dxgi = GetModuleHandleW(L"dxgi.dll")) {
+    if (FARPROC fn = GetProcAddress(dxgi, "CreateDXGIFactory1"))
+      MH_CreateHook(reinterpret_cast<LPVOID>(fn), reinterpret_cast<LPVOID>(&hk_create_factory1), reinterpret_cast<LPVOID*>(&g_create_factory1));
+    if (FARPROC fn = GetProcAddress(dxgi, "CreateDXGIFactory2"))
+      MH_CreateHook(reinterpret_cast<LPVOID>(fn), reinterpret_cast<LPVOID>(&hk_create_factory2), reinterpret_cast<LPVOID*>(&g_create_factory2));
+  }
+  if (HMODULE d3d12 = LoadLibraryW(L"d3d12.dll")) {
+    if (FARPROC fn = GetProcAddress(d3d12, "D3D12CreateDevice"))
+      MH_CreateHook(reinterpret_cast<LPVOID>(fn), reinterpret_cast<LPVOID>(&hk_d3d12_create_device),
+                    reinterpret_cast<LPVOID*>(&g_d3d12_create_device));
+  }
+  MH_EnableHook(MH_ALL_HOOKS);
 }
 
 }  // namespace
@@ -378,6 +477,7 @@ bool install() {
   }
   g_eject_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!create_hooks()) return false;
+  create_d3d12_capture_hooks();
 
   std::thread(eject_worker, self).detach();
   log("hooks installed (Present=%p ResizeBuffers=%p)", reinterpret_cast<void*>(g_present), reinterpret_cast<void*>(g_resize));

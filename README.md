@@ -7,6 +7,7 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 ## What works today
 
 - Injected DX11 overlay: MinHook trampolines on `Present`/`ResizeBuffers`, clean eject, WndProc reclaim
+- DX12 support: the swapchain's device is detected and rendering is submitted on the Target's own present queue (captured by hooking the `CreateDXGIFactory*`/`D3D12CreateDevice` exports and swapping the per-instance `CreateCommandQueue` vtable entry). The DLL must be present before the Target creates its device (inject early, e.g. while the game shows a launcher, or use host mode); mid-run injection into an established DX12 device logs and stays dormant rather than crashing
 - Hardened lifecycle: eject drains in-flight detours/messages before unload (no timing guesses); host-linked builds remove hooks but stay loaded; device-removed/reset triggers re-init; UI faults are contained (C++ exceptions; full SEH on MSVC builds)
 - Borderless menu rendered through a backend-agnostic Canvas (no ImGui windows or widgets in the UI layer)
 - Retained widgets: Toggle, Checkbox, Slider, Dropdown, Keybind, TextInput, ColorPicker
@@ -27,7 +28,7 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 
 - Drawing `Image` kind (the other primitives are supported)
 - Vulkan backend
-- DX12 attach: the renderer and a DX12 test target exist, but capturing the target's present command queue is unsolved in this build, so the overlay stays dormant on DX12 targets (safe no-op, no crash). DX11 is the supported backend
+- Suspended-process launch in the injector, which would guarantee DX12/Vulkan capture without relying on injecting before device creation
 
 ## Requirements
 
