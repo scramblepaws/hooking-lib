@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <thread>
 
 #include "core/log.h"
@@ -481,6 +482,15 @@ bool install() {
 
   std::thread(eject_worker, self).detach();
   log("hooks installed (Present=%p ResizeBuffers=%p)", reinterpret_cast<void*>(g_present), reinterpret_cast<void*>(g_resize));
+
+  // Signal readiness by name so `injector --launch` can resume a suspended
+  // target only after the hooks are live. The handle is intentionally kept.
+  char ready_narrow[64] = {};
+  std::snprintf(ready_narrow, sizeof(ready_narrow), "overlay_ready_%lu", GetCurrentProcessId());
+  wchar_t ready_name[64] = {};
+  MultiByteToWideChar(CP_ACP, 0, ready_narrow, -1, ready_name, 64);
+  static HANDLE ready_event = CreateEventW(nullptr, TRUE, FALSE, ready_name);
+  if (ready_event) SetEvent(ready_event);
   return true;
 }
 

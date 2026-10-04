@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cwchar>
 #include <initializer_list>
+#include <string>
 
 namespace {
 
@@ -88,12 +89,143 @@ bool default_dll_next_to_injector(char* out, size_t capacity) {
   if (!slash) return false;
   slash[1] = '\0';
   const size_t base = std::strlen(out);
-  for (const char* name : {"liboverlay.dll", "overlay.dll"}) {
+  for (const char* name : {"overlay.dll", "liboverlay.dll"}) {
     std::snprintf(out + base, capacity - base, "%s", name);
     if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES) return true;
   }
   out[base] = '\0';
   return false;
+}
+
+bool resolve_dll(const char* requested, char* out, size_t capacity) {
+  char chosen[MAX_PATH] = {};
+  if (requested && requested[0]) {
+    std::snprintf(chosen, sizeof(chosen), "%s", requested);
+  } else if (!default_dll_next_to_injector(chosen, sizeof(chosen))) {
+    if (!stdin_is_console() ||
+        !read_line("path to overlay dll: ", chosen, sizeof(chosen)) || !chosen[0])
+      return false;
+  }
+  if (!GetFullPathNameA(chosen, static_cast<DWORD>(capacity), out, nullptr)) return false;
+  std::printf("[2/6] dll: %s\n", out);
+  return true;
+}
+
+// Steps 3-6: allocate, write the path, LoadLibraryA remotely, report the base.
+bool inject_into(HANDLE process, const char* full_dll) {
+  std::printf("[3/6] opening target ... ");
+  print_target_name(process);
+  std::fflush(stdout);
+
+  const SIZE_T size = std::strlen(full_dll) + 1;
+  void* remote = VirtualAllocEx(process, nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  if (!remote) {
+    fail("VirtualAllocEx failed");
+    return false;
+  }
+  std::printf("[4/6] remote memory at 0x%p, writing dll path ... ", remote);
+  if (!WriteProcessMemory(process, remote, full_dll, size, nullptr)) {
+    fail("WriteProcessMemory failed");
+    return false;
+  }
+  std::printf("ok\n");
+
+  auto load_library =
+      reinterpret_cast<LPTHREAD_START_ROUTINE>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryA"));
+  if (!load_library) {
+    fail("GetProcAddress(LoadLibraryA) failed");
+    return false;
+  }
+  std::printf("[5/6] LoadLibraryA at 0x%p, spawning remote thread ... ", reinterpret_cast<void*>(load_library));
+  HANDLE thread = CreateRemoteThread(process, nullptr, 0, load_library, remote, 0, nullptr);
+  if (!thread) {
+    fail("CreateRemoteThread failed");
+    return false;
+  }
+  std::printf("ok, waiting for it to return ...\n");
+
+  if (WaitForSingleObject(thread, 10000) != WAIT_OBJECT_0) {
+    fail("remote LoadLibraryA did not finish in 10s");
+    return false;
+  }
+
+  DWORD module = 0;
+  GetExitCodeThread(thread, &module);
+  CloseHandle(thread);
+  VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+  if (!module) {
+    std::printf("[6/6] LoadLibraryA returned 0 inside the target\n");
+    fail("check the dll exists, is 64-bit, and matches the target");
+    return false;
+  }
+  std::printf("[6/6] injected: module base 0x%llx\n", static_cast<unsigned long long>(module));
+  return true;
+}
+
+void wait_for_overlay_ready(DWORD pid) {
+  char name_narrow[64] = {};
+  std::snprintf(name_narrow, sizeof(name_narrow), "overlay_ready_%lu", pid);
+  wchar_t name[64] = {};
+  MultiByteToWideChar(CP_ACP, 0, name_narrow, -1, name, 64);
+
+  HANDLE event = nullptr;
+  for (int i = 0; i < 100 && !event; ++i) {
+    event = OpenEventW(SYNCHRONIZE, FALSE, name);
+    if (!event) Sleep(50);
+  }
+  if (!event) {
+    std::printf("[!] overlay did not signal readiness; continuing\n");
+    return;
+  }
+  WaitForSingleObject(event, 10000);
+  CloseHandle(event);
+  std::printf("     overlay hooks installed\n");
+}
+
+std::string quoted(const char* text) {
+  if (!std::strchr(text, ' ')) return text;
+  std::string out = "\"";
+  out += text;
+  out += "\"";
+  return out;
+}
+
+int run_launch(int argc, char** argv, int arg) {
+  if (arg >= argc) return finish(2, "usage: injector --launch <exe> [args...]");
+
+  char exe[MAX_PATH] = {};
+  if (!GetFullPathNameA(argv[arg], MAX_PATH, exe, nullptr)) return fail("could not resolve the exe path");
+
+  char dll[MAX_PATH] = {};
+  if (!resolve_dll(nullptr, dll, sizeof(dll))) return finish(1, "no overlay dll found next to the injector");
+
+  std::string command = quoted(exe);
+  for (int i = arg + 1; i < argc; ++i) {
+    command += ' ';
+    command += quoted(argv[i]);
+  }
+  std::printf("[0/6] launching suspended: %s\n", command.c_str());
+
+  STARTUPINFOA startup = {};
+  startup.cb = sizeof(startup);
+  PROCESS_INFORMATION info = {};
+  if (!CreateProcessA(exe, command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, nullptr, &startup,
+                      &info))
+    return fail("CreateProcess failed");
+
+  std::printf("[1/6] target pid %lu (suspended)\n", info.dwProcessId);
+  if (!inject_into(info.hProcess, dll)) {
+    TerminateProcess(info.hProcess, 1);
+    CloseHandle(info.hThread);
+    CloseHandle(info.hProcess);
+    return finish(1, "injection failed; the target was never resumed");
+  }
+  wait_for_overlay_ready(info.dwProcessId);
+  ResumeThread(info.hThread);
+  CloseHandle(info.hThread);
+  CloseHandle(info.hProcess);
+  std::printf("done - target resumed with the overlay loaded\n");
+  return 0;
 }
 
 }  // namespace
@@ -106,6 +238,7 @@ int main(int argc, char** argv) {
     g_wait = false;
     ++arg;
   }
+  if (arg < argc && std::strcmp(argv[arg], "--launch") == 0) return run_launch(argc, argv, arg + 1);
 
   char target[260] = {};
   char dll[MAX_PATH] = {};
@@ -115,6 +248,7 @@ int main(int argc, char** argv) {
   if (!target[0]) {
     if (!stdin_is_console()) {
       std::printf("usage: injector [--no-wait] <pid or exe name> [path-to-overlay.dll]\n");
+      std::printf("       injector [--no-wait] --launch <exe> [args...]\n");
       return 2;
     }
     if (!read_line("target process (pid or exe name): ", target, sizeof(target)) || !target[0])
@@ -130,51 +264,18 @@ int main(int argc, char** argv) {
   }
   std::printf("[1/6] target pid %lu (%s)\n", pid, target);
 
-  if (!dll[0] && !default_dll_next_to_injector(dll, sizeof(dll))) {
-    if (!stdin_is_console() ||
-        !read_line("path to overlay dll: ", dll, sizeof(dll)) || !dll[0])
-      return finish(1, "no dll given and none found next to the injector");
-  }
-
   char full[MAX_PATH] = {};
-  if (!GetFullPathNameA(dll, MAX_PATH, full, nullptr)) return fail("could not resolve the dll path");
-  std::printf("[2/6] dll: %s\n", full);
+  if (!resolve_dll(dll, full, sizeof(full))) return finish(1, "no dll given and none found next to the injector");
 
-  std::printf("[3/6] opening target ... ");
   HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
                                    PROCESS_VM_WRITE | PROCESS_VM_READ,
                                FALSE, pid);
   if (!process) return fail("OpenProcess failed - wrong pid? elevated target needs an elevated injector");
-  print_target_name(process);
-  std::fflush(stdout);
 
-  const SIZE_T size = std::strlen(full) + 1;
-  void* remote = VirtualAllocEx(process, nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-  if (!remote) return fail("VirtualAllocEx failed");
-  std::printf("[4/6] remote memory at 0x%p, writing dll path ... ", remote);
-  if (!WriteProcessMemory(process, remote, full, size, nullptr)) return fail("WriteProcessMemory failed");
-  std::printf("ok\n");
-
-  auto load_library =
-      reinterpret_cast<LPTHREAD_START_ROUTINE>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryA"));
-  if (!load_library) return fail("GetProcAddress(LoadLibraryA) failed");
-  std::printf("[5/6] LoadLibraryA at 0x%p, spawning remote thread ... ", reinterpret_cast<void*>(load_library));
-  HANDLE thread = CreateRemoteThread(process, nullptr, 0, load_library, remote, 0, nullptr);
-  if (!thread) return fail("CreateRemoteThread failed");
-  std::printf("ok, waiting for it to return ...\n");
-
-  if (WaitForSingleObject(thread, 10000) != WAIT_OBJECT_0) return fail("remote LoadLibraryA did not finish in 10s");
-
-  DWORD module = 0;
-  GetExitCodeThread(thread, &module);
-  if (!module) {
-    std::printf("[6/6] LoadLibraryA returned 0 inside the target\n");
-    return fail("check the dll exists, is 64-bit, and matches the target");
+  if (!inject_into(process, full)) {
+    CloseHandle(process);
+    return finish(1);
   }
-  std::printf("[6/6] injected: module base 0x%llx\n", static_cast<unsigned long long>(module));
-
-  CloseHandle(thread);
-  VirtualFreeEx(process, remote, 0, MEM_RELEASE);
   CloseHandle(process);
   return finish(0, "done - the target should render the overlay (Del = menu, End = eject)");
 }
