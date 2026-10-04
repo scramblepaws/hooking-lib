@@ -14,6 +14,7 @@
 #include "core/config.h"
 #include "core/paths.h"
 #include "core/state.h"
+#include "script/script.h"
 #include "ui/canvas.h"
 #include "ui/menu_model.h"
 #include "ui/notifications.h"
@@ -509,6 +510,7 @@ void draw() {
 void draw_overlays() {
   ensure_scale();
   std::unique_ptr<Canvas> canvas = make_canvas(ImGui::GetForegroundDrawList(), g_scale);
+  script::render_drawing(*canvas);
   paint_notifications(*canvas);
 }
 

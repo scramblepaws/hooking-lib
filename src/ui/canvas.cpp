@@ -42,6 +42,10 @@ class ImCanvas : public Canvas {
     draw_list_->AddCircle(to_im(center), radius, to_u32(color), 0, thickness);
   }
 
+  void stroke_line(Vec2 a, Vec2 b, Color color, float thickness) override {
+    draw_list_->AddLine(to_im(a), to_im(b), to_u32(color), thickness);
+  }
+
   void fill_triangle(Vec2 a, Vec2 b, Vec2 c, Color color) override {
     draw_list_->AddTriangleFilled(to_im(a), to_im(b), to_im(c), to_u32(color));
   }

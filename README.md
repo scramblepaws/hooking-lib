@@ -17,13 +17,14 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 - Notifications: top-corner toasts (position/duration configurable) plus a bottom event feed, drawn whether or not the menu is open
 - Stylesheet layer: CSS subset (`menu {}`, `class {}`, `#id {}`) for colors and rounding; the shipped look is `assets/theme.css`
 - Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. `scripts/starter.lua` builds the shipped menu; the C++ starter remains the fallback when the folder is empty
+- Drawing API: script ESP primitives (`Drawing.new` for Line/Text/Circle/Square/Triangle) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
 - Frame log at `build/bin/overlay.log`
 
 ## Not built yet
 
-- Drawing/ESP immediate script API (scripts can paint within widgets; there is no standalone overlay draw layer yet)
+- Drawing `Image` kind (the other primitives are supported)
 - Vulkan backend
 - DX12 attach: the renderer and a DX12 test target exist, but capturing the target's present command queue is unsolved in this build, so the overlay stays dormant on DX12 targets (safe no-op, no crash). DX11 is the supported backend
 - External (non-injected) mode

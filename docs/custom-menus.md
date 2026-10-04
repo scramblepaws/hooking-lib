@@ -44,6 +44,33 @@ end)
 - `ui.save_config(name)`, `ui.load_config(name)`, `ui.notify(msg)`, `ui.event(msg)` close the loop with the Config and notification systems.
 - Embedding: `overlay_script_execute(source, chunk_name)` runs a chunk from C; `overlay_script_reload()` forces a reload.
 
+## Drawing (ESP primitives)
+
+`Drawing` renders over the game above regular UI, whether or not the menu is open. Objects are persistent; set properties, then `:Remove()` when done. `examples/scripts/drawing_demo.lua` is a runnable sample.
+
+```lua
+local box = Drawing.new("Square")
+box.Visible = true
+box.Position = Vector2.new(560, 250)
+box.Size = Vector2.new(160, 220)
+box.Thickness = 2
+box.Color = Color3.fromRGB(255, 70, 70)
+
+local label = Drawing.new("Text")
+label.Visible = true
+label.Position = Vector2.new(640, 200)
+label.Center = true
+label.Size = 18
+label.Outline = true
+label.Text = "target"
+label.Color = Color3.new(1, 1, 1)
+```
+
+- Kinds: `Line` (`From`, `To`), `Text` (`Position`, `Text`, `Size`, `Center`, `Outline`), `Circle` (`Position`, `Radius`, `Filled`), `Square` (`Position`, `Size`, `Filled`), `Triangle` (`PointA`, `PointB`, `PointC`, `Filled`). `Image` is not supported yet.
+- Common properties: `Visible`, `ZIndex`, `Color` (Color3 or hex string), `Transparency` (0..1), `Thickness`, `:Remove()` / `:Destroy()`.
+- `Vector2.new(x, y)` and `Color3.new/fromRGB/fromHSV` are provided by the sandbox; `Color3` values are 0..1. Coordinates are raw target-client pixels.
+- Drawing objects are cleared on script reload.
+
 Honest status: the widget layer is reusable, the menu chrome (sidebar, topbar, cards) is menu-specific code you copy and edit. The public C ABI exists; the C++ headers remain in-tree for now.
 
 ## The three layers

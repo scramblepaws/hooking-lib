@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ namespace {
 constexpr double kTickBudgetMs = 5.0;
 constexpr double kReloadIntervalSeconds = 0.5;
 constexpr int kCanvasTag = 42;
+constexpr int kDrawingTag = 43;
 
 lua_State* g_state = nullptr;
 bool g_started = false;
@@ -655,6 +657,236 @@ int l_fs_write(lua_State* state) {
   return 0;
 }
 
+// ---- Drawing API (ESP-style primitives) -----------------------------
+
+enum class DrawKind {
+  Line,
+  Text,
+  Circle,
+  Square,
+  Triangle,
+};
+
+struct DrawingObject {
+  DrawKind kind = DrawKind::Line;
+  bool visible = false;
+  float zindex = 0.0f;
+  float transparency = 0.0f;
+  overlay::ui::Color color{1.0f, 1.0f, 1.0f, 1.0f};
+  overlay::ui::Vec2 from{}, to{}, point_a{}, point_b{}, point_c{}, position{}, size{};
+  float radius = 10.0f;
+  float thickness = 1.0f;
+  float text_size = 16.0f;
+  bool filled = false;
+  bool center = true;
+  bool outline = false;
+  std::string text;
+};
+std::vector<DrawingObject*> g_drawings;
+
+float clampf(float value, float lo, float hi) { return value < lo ? lo : (value > hi ? hi : value); }
+
+bool table_vec2(lua_State* state, int index, overlay::ui::Vec2& out) {
+  if (!lua_istable(state, index)) return false;
+  lua_getfield(state, index, "X");
+  out.x = static_cast<float>(lua_tonumber(state, -1));
+  lua_pop(state, 1);
+  lua_getfield(state, index, "Y");
+  out.y = static_cast<float>(lua_tonumber(state, -1));
+  lua_pop(state, 1);
+  return true;
+}
+
+bool value_color(lua_State* state, int index, overlay::ui::Color& out) {
+  if (lua_isstring(state, index)) {
+    out.a = 1.0f;
+    return parse_hex_color(lua_tostring(state, index), out);
+  }
+  if (lua_istable(state, index)) {
+    lua_getfield(state, index, "R");
+    out.r = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, index, "G");
+    out.g = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, index, "B");
+    out.b = static_cast<float>(lua_tonumber(state, -1));
+    lua_pop(state, 1);
+    out.a = 1.0f;
+    if (out.r > 1.0f || out.g > 1.0f || out.b > 1.0f) {
+      out.r /= 255.0f;
+      out.g /= 255.0f;
+      out.b /= 255.0f;
+    }
+    return true;
+  }
+  return false;
+}
+
+void push_vec2(lua_State* state, const overlay::ui::Vec2& value) {
+  lua_createtable(state, 0, 2);
+  lua_pushnumber(state, value.x);
+  lua_setfield(state, -2, "X");
+  lua_pushnumber(state, value.y);
+  lua_setfield(state, -2, "Y");
+}
+
+void push_color3(lua_State* state, const overlay::ui::Color& value) {
+  lua_createtable(state, 0, 3);
+  lua_pushnumber(state, value.r);
+  lua_setfield(state, -2, "R");
+  lua_pushnumber(state, value.g);
+  lua_setfield(state, -2, "G");
+  lua_pushnumber(state, value.b);
+  lua_setfield(state, -2, "B");
+}
+
+int l_drawing_new(lua_State* state) {
+  const char* kind = luaL_checkstring(state, 1);
+  DrawKind parsed;
+  if (std::strcmp(kind, "Line") == 0)
+    parsed = DrawKind::Line;
+  else if (std::strcmp(kind, "Text") == 0)
+    parsed = DrawKind::Text;
+  else if (std::strcmp(kind, "Circle") == 0)
+    parsed = DrawKind::Circle;
+  else if (std::strcmp(kind, "Square") == 0)
+    parsed = DrawKind::Square;
+  else if (std::strcmp(kind, "Triangle") == 0)
+    parsed = DrawKind::Triangle;
+  else if (std::strcmp(kind, "Image") == 0)
+    luaL_error(state, "Drawing: Image is not supported yet");
+  else
+    luaL_error(state, "Drawing: unknown kind '%s'", kind);
+
+  auto* object = static_cast<DrawingObject*>(
+      lua_newuserdatataggedwithmetatable(state, sizeof(DrawingObject), kDrawingTag));
+  new (object) DrawingObject();
+  object->kind = parsed;
+  g_drawings.push_back(object);
+  return 1;
+}
+
+int l_drawing_remove(lua_State* state) {
+  auto* object = static_cast<DrawingObject*>(lua_touserdata(state, 1));
+  if (object) {
+    const auto found = std::find(g_drawings.begin(), g_drawings.end(), object);
+    if (found != g_drawings.end()) g_drawings.erase(found);
+    object->visible = false;
+  }
+  return 0;
+}
+
+int l_drawing_gc(lua_State* state) {
+  auto* object = static_cast<DrawingObject*>(lua_touserdata(state, 1));
+  if (object) {
+    const auto found = std::find(g_drawings.begin(), g_drawings.end(), object);
+    if (found != g_drawings.end()) g_drawings.erase(found);
+    object->~DrawingObject();
+  }
+  return 0;
+}
+
+int l_drawing_index(lua_State* state) {
+  auto* object = static_cast<DrawingObject*>(lua_touserdata(state, 1));
+  if (!object) {
+    lua_pushnil(state);
+    return 1;
+  }
+  const char* key = luaL_checkstring(state, 2);
+  if (std::strcmp(key, "Remove") == 0 || std::strcmp(key, "Destroy") == 0) {
+    lua_pushcfunction(state, l_drawing_remove, "Remove");
+  } else if (std::strcmp(key, "Visible") == 0) {
+    lua_pushboolean(state, object->visible ? 1 : 0);
+  } else if (std::strcmp(key, "ZIndex") == 0) {
+    lua_pushnumber(state, object->zindex);
+  } else if (std::strcmp(key, "Transparency") == 0) {
+    lua_pushnumber(state, object->transparency);
+  } else if (std::strcmp(key, "Color") == 0) {
+    push_color3(state, object->color);
+  } else if (std::strcmp(key, "Thickness") == 0) {
+    lua_pushnumber(state, object->thickness);
+  } else if (std::strcmp(key, "Radius") == 0) {
+    lua_pushnumber(state, object->radius);
+  } else if (std::strcmp(key, "Filled") == 0) {
+    lua_pushboolean(state, object->filled ? 1 : 0);
+  } else if (std::strcmp(key, "Center") == 0) {
+    lua_pushboolean(state, object->center ? 1 : 0);
+  } else if (std::strcmp(key, "Outline") == 0) {
+    lua_pushboolean(state, object->outline ? 1 : 0);
+  } else if (std::strcmp(key, "Text") == 0) {
+    lua_pushstring(state, object->text.c_str());
+  } else if (std::strcmp(key, "Size") == 0) {
+    if (object->kind == DrawKind::Text)
+      lua_pushnumber(state, object->text_size);
+    else
+      push_vec2(state, object->size);
+  } else if (std::strcmp(key, "Position") == 0) {
+    push_vec2(state, object->position);
+  } else if (std::strcmp(key, "From") == 0) {
+    push_vec2(state, object->from);
+  } else if (std::strcmp(key, "To") == 0) {
+    push_vec2(state, object->to);
+  } else if (std::strcmp(key, "PointA") == 0) {
+    push_vec2(state, object->point_a);
+  } else if (std::strcmp(key, "PointB") == 0) {
+    push_vec2(state, object->point_b);
+  } else if (std::strcmp(key, "PointC") == 0) {
+    push_vec2(state, object->point_c);
+  } else {
+    lua_pushnil(state);
+  }
+  return 1;
+}
+
+int l_drawing_newindex(lua_State* state) {
+  auto* object = static_cast<DrawingObject*>(lua_touserdata(state, 1));
+  if (!object) return 0;
+  const char* key = luaL_checkstring(state, 2);
+  if (std::strcmp(key, "Visible") == 0) {
+    object->visible = lua_toboolean(state, 3) != 0;
+  } else if (std::strcmp(key, "ZIndex") == 0) {
+    object->zindex = static_cast<float>(luaL_checknumber(state, 3));
+  } else if (std::strcmp(key, "Transparency") == 0) {
+    object->transparency = static_cast<float>(luaL_checknumber(state, 3));
+  } else if (std::strcmp(key, "Color") == 0) {
+    overlay::ui::Color color;
+    if (!value_color(state, 3, color)) luaL_error(state, "Drawing: expected a Color3 or hex string");
+    color.a = object->color.a;
+    object->color = color;
+  } else if (std::strcmp(key, "Thickness") == 0) {
+    object->thickness = static_cast<float>(luaL_checknumber(state, 3));
+  } else if (std::strcmp(key, "Radius") == 0) {
+    object->radius = static_cast<float>(luaL_checknumber(state, 3));
+  } else if (std::strcmp(key, "Filled") == 0) {
+    object->filled = lua_toboolean(state, 3) != 0;
+  } else if (std::strcmp(key, "Center") == 0) {
+    object->center = lua_toboolean(state, 3) != 0;
+  } else if (std::strcmp(key, "Outline") == 0) {
+    object->outline = lua_toboolean(state, 3) != 0;
+  } else if (std::strcmp(key, "Text") == 0) {
+    object->text = luaL_checkstring(state, 3);
+  } else if (std::strcmp(key, "Size") == 0) {
+    if (object->kind == DrawKind::Text)
+      object->text_size = static_cast<float>(luaL_checknumber(state, 3));
+    else if (!table_vec2(state, 3, object->size))
+      luaL_error(state, "Drawing: Size expects a Vector2");
+  } else if (std::strcmp(key, "Position") == 0) {
+    if (!table_vec2(state, 3, object->position)) luaL_error(state, "Drawing: Position expects a Vector2");
+  } else if (std::strcmp(key, "From") == 0) {
+    if (!table_vec2(state, 3, object->from)) luaL_error(state, "Drawing: From expects a Vector2");
+  } else if (std::strcmp(key, "To") == 0) {
+    if (!table_vec2(state, 3, object->to)) luaL_error(state, "Drawing: To expects a Vector2");
+  } else if (std::strcmp(key, "PointA") == 0) {
+    if (!table_vec2(state, 3, object->point_a)) luaL_error(state, "Drawing: PointA expects a Vector2");
+  } else if (std::strcmp(key, "PointB") == 0) {
+    if (!table_vec2(state, 3, object->point_b)) luaL_error(state, "Drawing: PointB expects a Vector2");
+  } else if (std::strcmp(key, "PointC") == 0) {
+    if (!table_vec2(state, 3, object->point_c)) luaL_error(state, "Drawing: PointC expects a Vector2");
+  }
+  return 0;
+}
+
 // ---- reload / execution ---------------------------------------------
 
 void unref_painters() {
@@ -670,6 +902,7 @@ void drop_sleepers() {
 void clear_menu() {
   overlay::ui::menu().pages.clear();
   overlay::ui::menu().current_page = 0;
+  g_drawings.clear();
   unref_painters();
   drop_sleepers();
 }
@@ -883,11 +1116,55 @@ void start() {
   lua_setglobal(g_state, "ui");
 
   lua_newtable(g_state);
-  lua_pushcfunction(g_state, l_fs_read, "l_fs_read");
+  lua_pushcfunction(g_state, l_fs_read, "read");
   lua_setfield(g_state, -2, "read");
-  lua_pushcfunction(g_state, l_fs_write, "l_fs_write");
+  lua_pushcfunction(g_state, l_fs_write, "write");
   lua_setfield(g_state, -2, "write");
   lua_setglobal(g_state, "fs");
+
+  // Roblox-ish value types so Drawing scripts look like what users know.
+  static const char kTypesPrelude[] =
+      "Vector2 = {}\n"
+      "function Vector2.new(x, y) return {X = x or 0, Y = y or 0} end\n"
+      "Vector2.zero = {X = 0, Y = 0}\n"
+      "Vector2.one = {X = 1, Y = 1}\n"
+      "Color3 = {}\n"
+      "function Color3.new(r, g, b) return {R = r or 0, G = g or 0, B = b or 0} end\n"
+      "function Color3.fromRGB(r, g, b) return {R = (r or 0) / 255, G = (g or 0) / 255, B = (b or 0) / 255} end\n"
+      "function Color3.fromHSV(h, s, v)\n"
+      "  h = (h or 0) % 1; s = s or 0; v = v or 0\n"
+      "  local i = math.floor(h * 6); local f = h * 6 - i\n"
+      "  local p = v * (1 - s); local q = v * (1 - s * f); local t = v * (1 - s * (1 - f))\n"
+      "  i = i % 6\n"
+      "  if i == 0 then return {R = v, G = t, B = p} end\n"
+      "  if i == 1 then return {R = q, G = v, B = p} end\n"
+      "  if i == 2 then return {R = p, G = v, B = t} end\n"
+      "  if i == 3 then return {R = p, G = q, B = v} end\n"
+      "  if i == 4 then return {R = t, G = p, B = v} end\n"
+      "  return {R = v, G = p, B = q}\n"
+      "end\n";
+  size_t types_size = 0;
+  char* types_bytecode = luau_compile(kTypesPrelude, sizeof(kTypesPrelude) - 1, nullptr, &types_size);
+  if (types_bytecode) {
+    if (luau_load(g_state, "types", types_bytecode, types_size, 0) == 0) lua_pcall(g_state, 0, 0, 0);
+    std::free(types_bytecode);
+  }
+
+  luaL_newmetatable(g_state, "overlay.drawing");
+  lua_pushcfunction(g_state, l_drawing_index, "__index");
+  lua_setfield(g_state, -2, "__index");
+  lua_pushcfunction(g_state, l_drawing_newindex, "__newindex");
+  lua_setfield(g_state, -2, "__newindex");
+  lua_pushcfunction(g_state, l_drawing_gc, "__gc");
+  lua_setfield(g_state, -2, "__gc");
+  lua_pushvalue(g_state, -1);
+  lua_setuserdatametatable(g_state, kDrawingTag);
+  lua_pop(g_state, 1);
+
+  lua_newtable(g_state);
+  lua_pushcfunction(g_state, l_drawing_new, "new");
+  lua_setfield(g_state, -2, "new");
+  lua_setglobal(g_state, "Drawing");
 
   // Sandbox: freeze globals and remove anything that can reach outside the menu.
   const char* blocked[] = {"os",     "io",        "debug",      "dofile", "loadfile", "require",
@@ -937,5 +1214,66 @@ bool execute(const char* source, const char* chunk_name) {
 }
 
 void request_reload() { g_reload_pending = true; }
+
+void render_drawing(overlay::ui::Canvas& canvas) {
+  if (g_drawings.empty()) return;
+  std::vector<DrawingObject*> ordered = g_drawings;
+  std::stable_sort(ordered.begin(), ordered.end(),
+                   [](const DrawingObject* a, const DrawingObject* b) { return a->zindex < b->zindex; });
+
+  for (const DrawingObject* object : ordered) {
+    if (!object->visible) continue;
+    overlay::ui::Color color = object->color;
+    color.a *= 1.0f - clampf(object->transparency, 0.0f, 1.0f);
+    if (color.a <= 0.0f) continue;
+
+    switch (object->kind) {
+      case DrawKind::Line:
+        canvas.stroke_line(object->from, object->to, color, object->thickness < 1.0f ? 1.0f : object->thickness);
+        break;
+      case DrawKind::Circle:
+        if (object->filled)
+          canvas.fill_circle(object->position, object->radius, color);
+        else
+          canvas.stroke_circle(object->position, object->radius, color, object->thickness);
+        break;
+      case DrawKind::Square: {
+        const overlay::ui::Rect rect{object->position.x, object->position.y, object->size.x, object->size.y};
+        if (object->filled)
+          canvas.fill_rect(rect, color, 0.0f);
+        else
+          canvas.stroke_rect(rect, color, object->thickness, 0.0f);
+        break;
+      }
+      case DrawKind::Triangle:
+        if (object->filled) {
+          canvas.fill_triangle(object->point_a, object->point_b, object->point_c, color);
+        } else {
+          const float thickness = object->thickness < 1.0f ? 1.0f : object->thickness;
+          canvas.stroke_line(object->point_a, object->point_b, color, thickness);
+          canvas.stroke_line(object->point_b, object->point_c, color, thickness);
+          canvas.stroke_line(object->point_c, object->point_a, color, thickness);
+        }
+        break;
+      case DrawKind::Text: {
+        const overlay::ui::Vec2 measured = canvas.measure_text_sized(object->text.c_str(), object->text_size);
+        overlay::ui::Vec2 position = object->position;
+        if (object->center) {
+          position.x -= measured.x * 0.5f;
+          position.y -= measured.y * 0.5f;
+        }
+        if (object->outline) {
+          const overlay::ui::Color outline{0.0f, 0.0f, 0.0f, color.a};
+          canvas.text_sized({position.x - 1.0f, position.y}, outline, object->text_size, object->text.c_str());
+          canvas.text_sized({position.x + 1.0f, position.y}, outline, object->text_size, object->text.c_str());
+          canvas.text_sized({position.x, position.y - 1.0f}, outline, object->text_size, object->text.c_str());
+          canvas.text_sized({position.x, position.y + 1.0f}, outline, object->text_size, object->text.c_str());
+        }
+        canvas.text_sized(position, color, object->text_size, object->text.c_str());
+        break;
+      }
+    }
+  }
+}
 
 }  // namespace overlay::script

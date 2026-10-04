@@ -32,16 +32,23 @@ class MockCanvas : public overlay::ui::Canvas {
   overlay::ui::Vec2 measure_text(const char*) const override { return {10.0f, 10.0f}; }
   overlay::ui::Vec2 measure_text_sized(const char*, float) const override { return {10.0f, 10.0f}; }
   void fill_rect(const overlay::ui::Rect&, overlay::ui::Color, float) override { rects++; }
-  void stroke_rect(const overlay::ui::Rect&, overlay::ui::Color, float, float) override {}
-  void fill_circle(overlay::ui::Vec2, float, overlay::ui::Color) override {}
-  void stroke_circle(overlay::ui::Vec2, float, overlay::ui::Color, float) override {}
-  void fill_triangle(overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Color) override {}
-  void text(overlay::ui::Vec2, overlay::ui::Color, const char*) override {}
-  void text_sized(overlay::ui::Vec2, overlay::ui::Color, float, const char*) override {}
-  void text_centered(const overlay::ui::Rect&, overlay::ui::Color, const char*) override {}
+  void stroke_rect(const overlay::ui::Rect&, overlay::ui::Color, float, float) override { rects++; }
+  void fill_circle(overlay::ui::Vec2, float, overlay::ui::Color) override { circles++; }
+  void stroke_circle(overlay::ui::Vec2, float, overlay::ui::Color, float) override { circles++; }
+  void stroke_line(overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Color, float) override { lines++; }
+  void fill_triangle(overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Vec2, overlay::ui::Color) override {
+    triangles++;
+  }
+  void text(overlay::ui::Vec2, overlay::ui::Color, const char*) override { texts++; }
+  void text_sized(overlay::ui::Vec2, overlay::ui::Color, float, const char*) override { texts++; }
+  void text_centered(const overlay::ui::Rect&, overlay::ui::Color, const char*) override { texts++; }
   void push_clip(const overlay::ui::Rect&) override {}
   void pop_clip() override {}
   int rects = 0;
+  int circles = 0;
+  int lines = 0;
+  int triangles = 0;
+  int texts = 0;
 };
 
 }  // namespace
@@ -137,6 +144,42 @@ int main() {
   check(mock.rects == 1, "lua painter drew");
 
   ui::menu().pages.clear();
+
+  // Drawing API: create, set, read back, remove, render.
+  check(script::execute(R"(
+    local circle = Drawing.new("Circle")
+    circle.Visible = true
+    circle.Position = Vector2.new(50, 60)
+    circle.Radius = 12
+    circle.Color = Color3.fromRGB(255, 0, 0)
+    circle.Filled = true
+    if circle.Radius ~= 12 then error("radius read back wrong") end
+    if circle.Filled ~= true then error("filled read back wrong") end
+    local gone = Drawing.new("Circle")
+    gone.Visible = true
+    gone:Remove()
+    local line = Drawing.new("Line")
+    line.Visible = true
+    line.From = Vector2.new(0, 0)
+    line.To = Vector2.new(100, 100)
+    line.Transparency = 0.5
+    local text = Drawing.new("Text")
+    text.Visible = true
+    text.Position = Vector2.new(10, 20)
+    text.Text = "hello"
+    text.Outline = true
+    local square = Drawing.new("Square")
+    square.Visible = true
+    square.Filled = true
+  )",
+                           "drawing"), "drawing chunk runs");
+  MockCanvas drawing_mock;
+  script::render_drawing(drawing_mock);
+  check(drawing_mock.circles == 1, "visible circle drawn, removed one skipped");
+  check(drawing_mock.lines == 1, "line drawn");
+  check(drawing_mock.texts == 5, "outlined text drawn as 4 offsets plus main");
+  check(drawing_mock.rects == 1, "filled square drawn");
+
   if (g_failures == 0) {
     std::printf("unit_script: all checks passed\n");
     return 0;
