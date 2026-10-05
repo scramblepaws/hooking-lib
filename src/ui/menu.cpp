@@ -26,20 +26,13 @@ namespace overlay::ui {
 
 namespace {
 
-const char* kIconTools = u8"\uf7d9";
-const char* kIconCode = u8"\uf121";
-const char* kIconGear = u8"\uf013";
-const char* kIconSave = u8"\uf0c7";
-const char* kIconComment = u8"\uf086";
-const char* kIconSearch = u8"\uf002";
+const char* kIconChevron = u8"\uf0d7";
 
-constexpr float kSidebarWidth = 224.0f;
-constexpr float kTopbarHeight = 66.0f;
-constexpr float kCardPadX = 18.0f;
-constexpr float kCardPadY = 14.0f;
-constexpr float kCardTitleTop = 44.0f;
+constexpr float kHeaderHeight = 64.0f;
+constexpr float kCardPadX = 16.0f;
+constexpr float kCardTitleTop = 58.0f;
 constexpr float kRowHeight = 24.0f;
-constexpr float kRowGap = 14.0f;
+constexpr float kRowGap = 16.0f;
 constexpr float kColumnGap = 18.0f;
 
 ImFont* g_ui_font = nullptr;
@@ -67,6 +60,16 @@ std::string to_utf8(const std::wstring& text) {
 
 float px(float value) { return value * g_scale; }
 
+Color lighten(Color color, float amount) {
+  color.r += amount;
+  color.g += amount;
+  color.b += amount;
+  color.r = color.r > 1.0f ? 1.0f : color.r;
+  color.g = color.g > 1.0f ? 1.0f : color.g;
+  color.b = color.b > 1.0f ? 1.0f : color.b;
+  return color;
+}
+
 struct ChromeColors {
   Color window, panel, border, text, dim, accent, hover, selected, button, button_hover;
 };
@@ -93,24 +96,8 @@ Page* current_page() {
   return &m.pages[static_cast<size_t>(m.current_page)];
 }
 
-const char* page_icon(const std::string& title) {
-  struct Entry {
-    const char* title;
-    const char* icon;
-  };
-  static const Entry kTable[] = {
-      {"Main", kIconTools},
-      {"Scripts", kIconCode},
-      {"Configs", kIconGear},
-  };
-  for (const Entry& entry : kTable)
-    if (title == entry.title) return entry.icon;
-  return kIconTools;
-}
-
 float card_height(size_t rows) {
-  return px(2.0f * kCardPadY + 30.0f + static_cast<float>(rows) * kRowHeight +
-            static_cast<float>(rows - 1) * kRowGap);
+  return px(kCardTitleTop + static_cast<float>(rows) * kRowHeight + static_cast<float>(rows - 1) * kRowGap + 18.0f);
 }
 
 void layout_card(std::deque<Widget>& widgets, const Rect& card) {
@@ -121,10 +108,10 @@ void layout_card(std::deque<Widget>& widgets, const Rect& card) {
 
 Rect content_rect() {
   const Rect& menu_rect = menu().rect;
-  const float x = menu_rect.x + px(kSidebarWidth) + px(24.0f);
-  const float y = menu_rect.y + px(kTopbarHeight) + px(4.0f);
-  const float w = menu_rect.w - px(kSidebarWidth) - px(48.0f);
-  const float h = menu_rect.h - px(kTopbarHeight) - px(8.0f);
+  const float x = menu_rect.x + px(24.0f);
+  const float y = menu_rect.y + px(kHeaderHeight) + px(16.0f);
+  const float w = menu_rect.w - px(48.0f);
+  const float h = menu_rect.h - px(kHeaderHeight) - px(40.0f);
   return {x, y, w, h};
 }
 
@@ -140,7 +127,7 @@ void layout_default() {
 
   const Rect content = content_rect();
   const size_t left_count = (sections.size() + 1) / 2;
-  const float left_width = (content.w - px(kColumnGap)) * 0.56f;
+  const float left_width = (content.w - px(kColumnGap)) * 0.66f;
   const float right_width = content.w - px(kColumnGap) - left_width;
   float left_y = content.y;
   float right_y = content.y;
@@ -170,103 +157,73 @@ void paint_widget(const Widget& widget, Canvas& canvas) {
   widget_paint(widget, canvas);
 }
 
-void paint_sidebar(Canvas& canvas, Input& input) {
+void paint_header(Canvas& canvas, Input& input) {
   Menu& m = menu();
-  const float sidebar_width = px(kSidebarWidth);
+  const Rect header{m.rect.x, m.rect.y, m.rect.w, px(kHeaderHeight)};
+  const float center_y = header.y + header.h * 0.5f;
 
-  canvas.text_sized({m.rect.x + px(14.0f), m.rect.y + px(22.0f)}, g_chrome.text, px(24.0f), m.title.c_str());
+  const float brand_size = px(22.0f);
+  const Vec2 brand = canvas.measure_text_sized(m.title.c_str(), brand_size);
+  canvas.text_sized({header.x + px(24.0f), center_y - brand.y * 0.5f}, g_chrome.text, brand_size, m.title.c_str());
 
-  float y = m.rect.y + px(68.0f);
-  const char* last_section = nullptr;
+  // Profile, anchored right: avatar with an online dot, config name, chevron.
+  const std::string name = config::active_name();
+  const char initial_text[2] = {
+      static_cast<char>(std::toupper(static_cast<unsigned char>(name.empty() ? 'o' : name[0]))), 0};
+  const float avatar = px(34.0f);
+  const Vec2 name_size = canvas.measure_text(name.c_str());
+  const Vec2 chevron = canvas.measure_text(kIconChevron);
+  const float profile_x = header.right() - px(24.0f) - (avatar + px(10.0f) + name_size.x + px(8.0f) + chevron.x);
+  const Rect avatar_rect{profile_x, center_y - avatar * 0.5f, avatar, avatar};
+  canvas.fill_rect(avatar_rect, g_chrome.button, px(8.0f));
+  canvas.stroke_rect(avatar_rect, g_chrome.border, 1.0f, px(8.0f));
+  const Vec2 initial = canvas.measure_text_sized(initial_text, px(16.0f));
+  canvas.text_sized({avatar_rect.x + (avatar - initial.x) * 0.5f, avatar_rect.y + (avatar - initial.y) * 0.5f},
+                    g_chrome.text, px(16.0f), initial_text);
+  const Vec2 dot{avatar_rect.x + avatar - px(5.0f), avatar_rect.y + avatar - px(5.0f)};
+  canvas.fill_circle(dot, px(5.5f), g_chrome.window);
+  canvas.fill_circle(dot, px(4.0f), Color{0.30f, 0.85f, 0.50f, 1.0f});
+  canvas.text({profile_x + avatar + px(10.0f), center_y - name_size.y * 0.5f}, g_chrome.text, name.c_str());
+  canvas.text({profile_x + avatar + px(10.0f) + name_size.x + px(8.0f), center_y - chevron.y * 0.5f}, g_chrome.dim,
+              kIconChevron);
+
+  // Page tabs; the active one sits in a bordered box.
+  float x = header.x + px(24.0f) + brand.x + px(36.0f);
   for (size_t i = 0; i < m.pages.size(); ++i) {
-    Page& page = m.pages[i];
-    if (!last_section || page.nav_section != last_section) {
-      last_section = page.nav_section.c_str();
-      y += px(14.0f);
-      canvas.text({m.rect.x + px(14.0f), y}, g_chrome.dim, page.nav_section.c_str());
-      y += px(18.0f);
-    }
-    const Rect row{m.rect.x + px(8.0f), y, sidebar_width - px(16.0f), px(36.0f)};
+    const char* title = m.pages[i].title.c_str();
+    const Vec2 label = canvas.measure_text_sized(title, px(15.0f));
+    const Rect tab{x, center_y - px(17.0f), label.x + px(28.0f), px(34.0f)};
+    if (tab.right() > profile_x - px(16.0f)) break;  // ponytail: no overflow scrolling
     const bool selected = static_cast<int>(i) == m.current_page;
-    const bool hovered = row.contains(input.mouse);
-    if (selected || hovered) {
-      canvas.fill_rect(row, selected ? g_chrome.selected : g_chrome.hover, px(3.0f));
-      if (selected) canvas.fill_rect({row.x, row.y, px(2.0f), row.h}, g_chrome.accent);
+    const bool hovered = tab.contains(input.mouse);
+    if (selected) {
+      canvas.fill_rect(tab, g_chrome.selected, px(4.0f));
+      canvas.stroke_rect(tab, lighten(g_chrome.border, 0.06f), 1.0f, px(4.0f));
+    } else if (hovered) {
+      canvas.fill_rect(tab, g_chrome.hover, px(4.0f));
     }
-    const char* icon = page_icon(page.title);
-    const Vec2 icon_size = canvas.measure_text(icon);
-    canvas.text({row.x + px(12.0f), row.y + (row.h - icon_size.y) * 0.5f}, selected ? g_chrome.text : g_chrome.dim, icon);
-    const Vec2 label = canvas.measure_text(page.title.c_str());
-    canvas.text({row.x + px(12.0f) + icon_size.x + px(12.0f), row.y + (row.h - label.y) * 0.5f},
-                selected ? g_chrome.text : g_chrome.dim, page.title.c_str());
+    canvas.text_sized({tab.x + (tab.w - label.x) * 0.5f, center_y - label.y * 0.5f},
+                      selected ? g_chrome.text : g_chrome.dim, px(15.0f), title);
     if (hovered && input.mouse_clicked && !input.click_consumed) {
       m.current_page = static_cast<int>(i);
       input.click_consumed = true;
     }
-    y += px(36.0f) + px(2.0f);
+    x += tab.w + px(4.0f);
   }
-}
 
-void paint_profile(Canvas& canvas) {
-  const Rect& menu_rect = menu().rect;
-  const Vec2 base{menu_rect.x + px(16.0f), menu_rect.y + menu_rect.h - px(80.0f)};
-  const std::string name = config::active_name();
-  const char initial_text[2] = {
-      static_cast<char>(std::toupper(static_cast<unsigned char>(name.empty() ? 'o' : name[0]))), 0};
-
-  canvas.fill_circle({base.x + px(19.0f), base.y + px(19.0f)}, px(19.0f), g_chrome.accent);
-  const Vec2 initial = canvas.measure_text_sized(initial_text, px(18.0f));
-  canvas.text_sized({base.x + px(19.0f) - initial.x * 0.5f, base.y + px(19.0f) - initial.y * 0.5f}, g_chrome.text,
-                    px(18.0f), initial_text);
-
-  canvas.text({base.x + px(48.0f), base.y + px(4.0f)}, g_chrome.text, name.c_str());
-
-  std::time_t now = std::time(nullptr);
-  std::tm* local = std::localtime(&now);
-  char time_text[64] = {};
-  if (local) std::strftime(time_text, sizeof(time_text), "%d.%m  %H:%M", local);
-  canvas.text({base.x + px(48.0f), base.y + px(26.0f)}, g_chrome.dim, time_text);
-}
-
-void paint_topbar(Canvas& canvas, Input& input) {
-  const Rect& menu_rect = menu().rect;
-  const Rect topbar{menu_rect.x + px(kSidebarWidth), menu_rect.y, menu_rect.w - px(kSidebarWidth), px(kTopbarHeight)};
-
-  const Rect save{topbar.x + px(24.0f), topbar.y + px(14.0f), px(118.0f), px(38.0f)};
-  const bool hovered = save.contains(input.mouse);
-  canvas.fill_rect(save, hovered ? g_chrome.button_hover : g_chrome.button, px(3.0f));
-  canvas.stroke_rect(save, g_chrome.border, 1.0f, px(3.0f));
-  const Vec2 icon = canvas.measure_text(kIconSave);
-  const Vec2 label = canvas.measure_text("Save");
-  float x = save.x + (save.w - (icon.x + px(10.0f) + label.x)) * 0.5f;
-  canvas.text({x, save.y + (save.h - icon.y) * 0.5f}, g_chrome.text, kIconSave);
-  x += icon.x + px(10.0f);
-  canvas.text({x, save.y + (save.h - label.y) * 0.5f}, g_chrome.text, "Save");
-  if (hovered && input.mouse_clicked && !input.click_consumed) input.click_consumed = true;
-
-  const float icons_right = topbar.right() - px(24.0f);
-  const char* icons[] = {kIconComment, kIconGear, kIconSearch};
-  for (int i = 0; i < 3; ++i) {
-    const Rect box{icons_right - px(32.0f) * static_cast<float>(3 - i) - px(6.0f) * static_cast<float>(2 - i),
-                   topbar.y + px(17.0f), px(32.0f), px(32.0f)};
-    const bool icon_hovered = box.contains(input.mouse);
-    const Vec2 size = canvas.measure_text(icons[i]);
-    canvas.text({box.x + (box.w - size.x) * 0.5f, box.y + (box.h - size.y) * 0.5f}, icon_hovered ? g_chrome.text : g_chrome.dim,
-                icons[i]);
-  }
+  canvas.fill_rect({header.x, header.bottom() - 1.0f, header.w, 1.0f}, g_chrome.border);
 }
 
 void paint_cards(Canvas& canvas) {
   for (const CardView& card : g_cards) {
-    canvas.fill_rect(card.rect, g_chrome.panel, px(3.0f));
-    canvas.stroke_rect(card.rect, g_chrome.border, 1.0f, px(3.0f));
-    canvas.text({card.rect.x + px(kCardPadX), card.rect.y + px(kCardPadY)}, g_chrome.text, card.section->title.c_str());
-    canvas.fill_rect({card.rect.x + px(kCardPadX), card.rect.y + px(37.0f), card.rect.w - px(2.0f * kCardPadX), 1.0f},
-                     g_chrome.border);
+    canvas.fill_rect(card.rect, g_chrome.panel, px(6.0f));
+    canvas.stroke_rect(card.rect, g_chrome.border, 1.0f, px(6.0f));
+    canvas.text_sized({card.rect.x + px(kCardPadX), card.rect.y + px(14.0f)}, g_chrome.text, px(15.0f),
+                      card.section->title.c_str());
+    canvas.fill_rect({card.rect.x, card.rect.y + px(42.0f), card.rect.w, 1.0f}, g_chrome.border);
     const std::deque<Widget>& widgets = card.section->widgets;
     for (size_t i = 0; i + 1 < widgets.size(); ++i)
-      canvas.fill_rect({card.rect.x + px(kCardPadX), widgets[i].rect.bottom() + px(kRowGap) * 0.5f,
-                        card.rect.w - px(2.0f * kCardPadX), 1.0f},
+      canvas.fill_rect({card.rect.x, widgets[i].rect.bottom() + px(kRowGap) * 0.5f, card.rect.w, 1.0f},
                        g_chrome.border);
   }
 }
@@ -279,14 +236,13 @@ void paint_placeholder(Canvas& canvas) {
 }
 
 void paint_default_chrome(Canvas& canvas, Input& input) {
-  canvas.fill_rect(menu().rect, g_chrome.window, px(4.0f));
-  canvas.stroke_rect(menu().rect, g_chrome.border, 1.0f, px(4.0f));
+  canvas.fill_rect(menu().rect, g_chrome.window, px(6.0f));
+  canvas.stroke_rect(menu().rect, g_chrome.border, 1.0f, px(6.0f));
   if (menu().pages.empty()) {
     paint_placeholder(canvas);
     return;
   }
-  paint_sidebar(canvas, input);
-  paint_topbar(canvas, input);
+  paint_header(canvas, input);
   paint_cards(canvas);
   if (g_cards.empty()) paint_placeholder(canvas);
 }
@@ -472,7 +428,6 @@ void draw() {
   if (!blank) paint_default_chrome(*canvas, input);
 
   paint_active_widgets(*canvas);
-  if (!blank && !m.pages.empty()) paint_profile(*canvas);
   paint_active_popups(*canvas);
 
   handle_drag(input);

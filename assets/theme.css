@@ -4,20 +4,20 @@
    row-hover, nav-selected, button, button-hover, field, rounding. */
 
 menu {
-  accent: #b23636;
-  track: #26262a;
-  knob: #e8e8e8;
-  text: #e8e8e8;
-  text-dim: #8c8c92;
-  panel: #17171a;
-  border: #2a2a2e;
-  window-bg: #131314;
-  row-hover: #1e1e22;
-  nav-selected: #202025;
-  button: #1a1a1d;
-  button-hover: #212126;
-  field: #131314;
-  rounding: 3;
+  accent: #c9536b;
+  track: #202027;
+  knob: #e8e8ec;
+  text: #e8e8ec;
+  text-dim: #8b8b95;
+  panel: #121216;
+  border: #232329;
+  window-bg: #0b0b0d;
+  row-hover: #1a1a20;
+  nav-selected: #1c1c22;
+  button: #17171c;
+  button-hover: #202027;
+  field: #0f0f13;
+  rounding: 6;
 }
 
 /* Examples:
