@@ -380,13 +380,14 @@ void overlay_widget_set_range(OverlayWidget* handle, float min, float max) {
 void overlay_widget_set_format(OverlayWidget* handle, const char* format, const char* alt_text) {
   overlay::ui::Widget* w = widget_of(handle);
   if (!w) return;
-  w->format = format ? format : "%.2f";
-  w->alt_text = alt_text;
+  w->format = overlay::ui::sanitize_number_format(format);
+  w->alt_text = alt_text ? alt_text : "";
 }
 
 void overlay_widget_set_items(OverlayWidget* handle, const char* const* items, size_t count) {
   overlay::ui::Widget* w = widget_of(handle);
   if (!w) return;
+  if (count > 0 && !items) return;
   w->items.clear();
   w->items.reserve(count);
   for (size_t i = 0; i < count; ++i) w->items.push_back(items[i] ? items[i] : "");

@@ -59,8 +59,8 @@ struct Widget {
   WidgetValue value = false;
   float min_value = 0.0f;
   float max_value = 1.0f;
-  const char* format = "%.0f";
-  const char* alt_text = nullptr;
+  std::string format = "%.0f";
+  std::string alt_text;
   std::vector<std::string> items;
 
   bool show_label = true;
@@ -111,6 +111,10 @@ int widget_int(const Widget& widget);
 const std::string& widget_string(const Widget& widget);
 Color widget_color(const Widget& widget);
 const KeyCombo& widget_key(const Widget& widget);
+
+// Returns the format string only if it is a single numeric conversion
+// (%[flags][width][.precision]f); anything else falls back to "%.0f".
+std::string sanitize_number_format(const char* format);
 
 void key_name(int code, char* out, size_t capacity);
 const char* widget_class_name(WidgetClass klass);

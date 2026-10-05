@@ -153,7 +153,8 @@ void paint_slider(const Widget& widget, Canvas& canvas) {
   const float gap = kSliderGap * scale;
   const float track_width = control.w - box_width - gap;
   const float value = widget_float(widget);
-  const float t = clamp01((value - widget.min_value) / (widget.max_value - widget.min_value));
+  const float span = widget.max_value - widget.min_value;
+  const float t = clamp01(span > 0.0f ? (value - widget.min_value) / span : 0.0f);
   const float mid = control.y + control.h * 0.5f;
   const float half = 2.5f * scale;
 
@@ -162,10 +163,10 @@ void paint_slider(const Widget& widget, Canvas& canvas) {
   canvas.fill_circle({control.x + track_width * t, mid}, 7.0f * scale, accent);
 
   char text_buffer[32];
-  if (widget.alt_text && value <= widget.min_value + 0.5f)
-    std::snprintf(text_buffer, sizeof(text_buffer), "%s", widget.alt_text);
+  if (!widget.alt_text.empty() && value <= widget.min_value + 0.5f)
+    std::snprintf(text_buffer, sizeof(text_buffer), "%s", widget.alt_text.c_str());
   else
-    std::snprintf(text_buffer, sizeof(text_buffer), widget.format, value);
+    std::snprintf(text_buffer, sizeof(text_buffer), widget.format.c_str(), value);
 
   const Rect box{control.x + track_width + gap, control.y + 1.0f * scale, box_width, 22.0f * scale};
   canvas.fill_rect(box, track, rounding);
@@ -500,9 +501,36 @@ Widget make_slider(const char* id, const char* label, float value, float min, fl
   widget.value = value;
   widget.min_value = min;
   widget.max_value = max;
-  widget.format = format;
-  widget.alt_text = alt_text;
+  widget.format = sanitize_number_format(format);
+  widget.alt_text = alt_text ? alt_text : "";
   return widget;
+}
+
+std::string sanitize_number_format(const char* format) {
+  // Literal text around exactly one float conversion is fine ("%.0f°"),
+  // including "%%" for a literal percent. Any second conversion (or %s/%n/%d)
+  // would read the wrong varargs; those fall back to "%.0f".
+  if (!format) return "%.0f";
+  const char* conversion = nullptr;
+  for (const char* c = format; *c;) {
+    if (*c != '%') {
+      ++c;
+      continue;
+    }
+    if (c[1] == '%') {
+      c += 2;  // literal percent
+      continue;
+    }
+    if (conversion) return "%.0f";  // a second conversion
+    const char* p = c + 1;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0' || (*p >= '1' && *p <= '9') || *p == '.')
+      ++p;
+    if (*p != 'f' && *p != 'F') return "%.0f";
+    conversion = c;
+    c = p + 1;
+  }
+  if (!conversion) return "%.0f";
+  return std::string(format);
 }
 
 Widget make_dropdown(const char* id, const char* label, int index, std::vector<std::string> items) {
