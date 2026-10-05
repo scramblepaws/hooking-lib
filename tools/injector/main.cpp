@@ -102,12 +102,29 @@ bool resolve_dll(const char* requested, char* out, size_t capacity) {
   if (requested && requested[0]) {
     std::snprintf(chosen, sizeof(chosen), "%s", requested);
   } else if (!default_dll_next_to_injector(chosen, sizeof(chosen))) {
-    if (!stdin_is_console() ||
-        !read_line("path to overlay dll: ", chosen, sizeof(chosen)) || !chosen[0])
+    if (!stdin_is_console()) {
+      std::printf("no overlay dll given and none found next to the injector\n");
       return false;
+    }
+    if (!read_line("path to overlay dll: ", chosen, sizeof(chosen)) || !chosen[0]) return false;
   }
   if (!GetFullPathNameA(chosen, static_cast<DWORD>(capacity), out, nullptr)) return false;
+  if (GetFileAttributesA(out) == INVALID_FILE_ATTRIBUTES) {
+    std::printf("[2/6] dll not found: %s\n", out);
+    return false;
+  }
   std::printf("[2/6] dll: %s\n", out);
+  return true;
+}
+
+bool overlay_ready_event_exists(DWORD pid) {
+  char name_narrow[64] = {};
+  std::snprintf(name_narrow, sizeof(name_narrow), "overlay_ready_%lu", pid);
+  wchar_t name[64] = {};
+  MultiByteToWideChar(CP_ACP, 0, name_narrow, -1, name, 64);
+  HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, name);
+  if (!event) return false;
+  CloseHandle(event);
   return true;
 }
 
@@ -195,9 +212,13 @@ int run_launch(int argc, char** argv, int arg) {
 
   char exe[MAX_PATH] = {};
   if (!GetFullPathNameA(argv[arg], MAX_PATH, exe, nullptr)) return fail("could not resolve the exe path");
+  if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) {
+    std::printf("exe not found: %s\n", exe);
+    return finish(1);
+  }
 
   char dll[MAX_PATH] = {};
-  if (!resolve_dll(nullptr, dll, sizeof(dll))) return finish(1, "no overlay dll found next to the injector");
+  if (!resolve_dll(nullptr, dll, sizeof(dll))) return finish(1);
 
   std::string command = quoted(exe);
   for (int i = arg + 1; i < argc; ++i) {
@@ -221,7 +242,13 @@ int run_launch(int argc, char** argv, int arg) {
     return finish(1, "injection failed; the target was never resumed");
   }
   wait_for_overlay_ready(info.dwProcessId);
-  ResumeThread(info.hThread);
+  if (ResumeThread(info.hThread) == static_cast<DWORD>(-1)) {
+    const DWORD error = GetLastError();
+    CloseHandle(info.hThread);
+    CloseHandle(info.hProcess);
+    std::printf("target exited before it could be resumed (error %lu)\n", error);
+    return finish(1);
+  }
   CloseHandle(info.hThread);
   CloseHandle(info.hProcess);
   std::printf("done - target resumed with the overlay loaded\n");
@@ -263,9 +290,13 @@ int main(int argc, char** argv) {
     if (!pid) return finish(1, "process not found - is it running? pass the exe name or a pid");
   }
   std::printf("[1/6] target pid %lu (%s)\n", pid, target);
+  if (overlay_ready_event_exists(pid)) {
+    std::printf("overlay is already injected into pid %lu - eject it first (End key), then re-inject\n", pid);
+    return finish(1);
+  }
 
   char full[MAX_PATH] = {};
-  if (!resolve_dll(dll, full, sizeof(full))) return finish(1, "no dll given and none found next to the injector");
+  if (!resolve_dll(dll, full, sizeof(full))) return finish(1);
 
   HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
                                    PROCESS_VM_WRITE | PROCESS_VM_READ,
