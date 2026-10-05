@@ -38,10 +38,10 @@ function Reset-Log {
   Set-Content $log ""
 }
 
-function Wait-Log([string]$pattern, [int]$seconds) {
+function Wait-Log([string]$pattern, [int]$seconds, [string]$path = $log) {
   for ($i = 0; $i -lt ($seconds * 10); ++$i) {
-    if (Test-Path $log) {
-      if (Select-String -Path $log -Pattern $pattern -Quiet) { return $true }
+    if (Test-Path $path) {
+      if (Select-String -Path $path -Pattern $pattern -Quiet) { return $true }
     }
     Start-Sleep -Milliseconds 100
   }
@@ -93,6 +93,14 @@ try {
     return "access violation contained, process alive"
   }
 
+  Invoke-Step "package" {
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tools\package.ps1") 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "package failed" }
+    $zips = Get-ChildItem (Join-Path $root "build\dist") -Filter "*.zip"
+    if ($zips.Count -lt 2) { throw "expected 2 zip artifacts" }
+    return "$($zips.Count) artifacts"
+  }
+
   if (-not $SkipGpu) {
     Invoke-Step "injected DX11" { return (Test-InjectedBackend "dx11" @() 10) }
     Invoke-Step "injected DX12" { return (Test-InjectedBackend "dx12" @("--dx12") 12) }
@@ -110,6 +118,30 @@ try {
       if (-not $alive) { throw "target died across recreation" }
       if ($rebinds -lt 2) { throw "expected 2 rebinds, saw $rebinds" }
       return "$rebinds rebinds survived"
+    }
+    Invoke-Step "sdk consumer from zip" {
+      $zip = Get-ChildItem (Join-Path $root "build\dist") -Filter "overlay-sdk-*.zip" | Select-Object -First 1
+      if (-not $zip) { throw "sdk zip missing" }
+      $extract = Join-Path $env:TEMP "overlay-sdk-check"
+      Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+      Expand-Archive -Path $zip.FullName -DestinationPath $extract
+      $consumerBuild = Join-Path $env:TEMP "overlay-consumer-build"
+      Remove-Item $consumerBuild -Recurse -Force -ErrorAction SilentlyContinue
+      & cmake -S (Join-Path $root "examples\sdk_consumer") -B $consumerBuild -G Ninja "-DOVERLAY_SDK_DIR=$extract" "-DCMAKE_BUILD_TYPE=Release" 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "configure against the sdk failed" }
+      & cmake --build $consumerBuild 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "consumer build failed" }
+      Copy-Item (Join-Path $extract "bin\overlay.dll") $consumerBuild -Force
+      Copy-Item (Join-Path $extract "bin\assets") $consumerBuild -Recurse -Force
+      $consumerLog = Join-Path $consumerBuild "overlay.log"
+      Set-Content $consumerLog ""
+      Start-Process -FilePath (Join-Path $consumerBuild "sdk_consumer.exe") | Out-Null
+      $ready = Wait-Log "render ready" 10 $consumerLog
+      $alive = [bool](Get-Process sdk_consumer -ErrorAction SilentlyContinue)
+      Stop-Targets
+      if (-not $ready) { throw "consumer never rendered" }
+      if (-not $alive) { throw "consumer died" }
+      return "packaged sdk built and rendered"
     }
   } else {
     Write-Host "== GPU stages skipped" -ForegroundColor Yellow
