@@ -14,11 +14,11 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - Retained widgets: Toggle, Checkbox, Slider, Dropdown, Keybind, TextInput, ColorPicker
 - Replaceable painters: any widget's rendering can be overridden per instance (C++ or C callback)
 - Public C ABI (`include/overlay/overlay_c.h`): lifecycle, data-driven menu builder (pages/sections/widgets), widget values, painters + canvas, blank-mode chrome painter
-- Starter menu (shipped default) and blank mode (consumer-drawn chrome), both over the same model
-- Config persistence: named JSON snapshots keyed by widget `id`, saved to `<dll dir>/configs/`, autosave on eject, Configs page in the starter menu
+- No built-in menu content: an Overlay starts empty (the chrome frame plus a placeholder), and the pages/widgets come from the host through the C ABI or from scripts you drop in `scripts/`. Blank mode replaces the chrome too (consumer-drawn)
+- Config persistence: named JSON snapshots keyed by widget `id`, saved to `<dll dir>/configs/`, autosave on eject; the Configs page pattern (a page titled `Configs` with `config_name`/`config_save`/`config_load` widgets) is handled by the library
 - Notifications: top-corner toasts (position/duration configurable) plus a bottom event feed, drawn whether or not the menu is open
 - Stylesheet layer: CSS subset (`menu {}`, `class {}`, `#id {}`) for colors and rounding; the shipped look is `assets/theme.css`
-- Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. `scripts/starter.lua` builds the shipped menu; the C++ starter remains the fallback when the folder is empty
+- Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. Scripts own the menu when present; with no scripts the Overlay stays empty
 - Drawing API: script ESP primitives via `Drawing.new` (Line/Text/Circle/Square/Triangle/Image) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game. Images decode with Windows WIC from files relative to the scripts folder and upload to whichever backend is active (DX11/DX12/Vulkan), bounded per session by the backend's overlay texture slots
 - C# binding (`bindings/csharp/OverlayLib`): P/Invoke over the C ABI with handle wrappers, delegates for painters and a runnable smoke example
 - External mode: `overlay_init` with `OVERLAY_FLAG_EXTERNAL` gives the library its own topmost, click-through, color-keyed window over a target (or the primary monitor), running the same UI and script stack on its own thread. No injection, no hooks
@@ -133,7 +133,7 @@ src/hook/            MinHook swapchain hooks, WndProc, input capture
 src/render/          ImGui context + DX11/DX12/Vulkan backends, textures, font/DPI bootstrap
 src/script/          Luau host: sandbox, scheduler, ui/fs bindings, hot reload
 src/ui/              Canvas, widgets, painters, theme, notifications, menu
-scripts/             *.lua loaded at startup and on change (the starter menu lives here)
+scripts/             *.lua loaded at startup and hot-reloaded; the library ships no scripts of its own
 examples/test_app/   DX11/DX12/Vulkan target for smoke tests
 bindings/csharp/     .NET wrapper over the C ABI + smoke example
 tools/injector/      injector CLI

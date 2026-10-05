@@ -24,7 +24,7 @@ Toasts and the event feed are script/dev facing: `overlay_notify("...")`, `overl
 
 ## Scripting (Luau)
 
-Every `*.lua` in `<dll dir>/scripts/` runs at startup on a sandboxed VM and is hot-reloaded on change. When scripts create UI they own the menu; with an empty folder the C++ starter builds instead. `scripts/starter.lua` is the shipped example.
+Every `*.lua` in `<dll dir>/scripts/` runs at startup on a sandboxed VM and is hot-reloaded on change. Scripts own the menu when at least one exists; with no scripts the Overlay stays empty until the host adds pages through the C ABI. A page titled `Configs` with `config_name` / `config_save` / `config_load` widgets gets config handling from the library.
 
 ```lua
 local page = ui.page("Home", "Root")
@@ -42,7 +42,7 @@ ui.set_painter("enabled", function(state, canvas)
 end)
 ```
 
-- Creation: `ui.page(title, nav_section)`, `ui.section(page, title)`, then `ui.toggle/checkbox/slider/dropdown/keybind/text_input/colorpicker/button(section, id, label, ...)`. Ids are the config keys.
+- Creation: `ui.page(title, nav_section)`, `ui.section(page, title)`, then `ui.toggle/checkbox/slider/dropdown/keybind/text_input/colorpicker/button(section, id, label, ...)`. Ids are the config keys. Colors (colorpicker, canvas painters) accept a hex string (`"#8c5cf5"`), a `Color3` table, or four raw numbers.
 - Properties: `ui.get_bool/set_bool`, `get/set_number`, `get/set_int`, `get/set_text`, `get/set_key`, `get/set_color` (hex string or r,g,b,a).
 - Painters: `ui.set_painter(id, function(state, canvas) ...)`; state exposes `value, hovered, focused, clicked, anim`, row rect `x,y,w,h` and control rect `cx,cy,cw,ch`. Canvas methods: `rect`, `outline`, `circle`, `text`, `text_centered`, `measure`, `scale`, `clip_push`, `clip_pop`; colors accept `"#rrggbb"`, `"#rgb"`, `"#rrggbbaa"` or four numbers.
 - Scheduling: `task.wait(s)`, `task.spawn(fn, ...)`, `task.defer`, `task.delay(s, fn)`; scripts run on the render thread with a 5 ms per-resume budget and an interrupt that stops runaway loops.

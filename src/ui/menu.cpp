@@ -26,12 +26,6 @@ namespace overlay::ui {
 
 namespace {
 
-const char* kIconCrosshair = u8"\uf05b";
-const char* kIconAntiAim = u8"\uf0e2";
-const char* kIconMouse = u8"\uf8cc";
-const char* kIconUser = u8"\uf007";
-const char* kIconGlobe = u8"\uf0ac";
-const char* kIconLayers = u8"\uf5fd";
 const char* kIconTools = u8"\uf7d9";
 const char* kIconCode = u8"\uf121";
 const char* kIconGear = u8"\uf013";
@@ -54,7 +48,6 @@ float g_scale = 1.0f;
 float g_requested_scale = 1.0f;
 float g_menu_scale = 0.0f;
 int g_frame = 0;
-bool g_starter_checked = false;
 bool g_dragging = false;
 Vec2 g_drag_anchor;
 
@@ -106,24 +99,13 @@ const char* page_icon(const std::string& title) {
     const char* icon;
   };
   static const Entry kTable[] = {
-      {"Ragebot", kIconCrosshair}, {"Anti Aim", kIconAntiAim}, {"Legitbot", kIconMouse}, {"Players", kIconUser},
-      {"World", kIconGlobe},       {"Inventory", kIconLayers}, {"Main", kIconTools},      {"Scripts", kIconCode},
+      {"Main", kIconTools},
+      {"Scripts", kIconCode},
       {"Configs", kIconGear},
   };
   for (const Entry& entry : kTable)
     if (title == entry.title) return entry.icon;
   return kIconTools;
-}
-
-Widget& scope_widget() {
-  static Widget widget = [] {
-    Widget value = make_dropdown("##scope", "", 0, {"Global", "Ragebot", "Legitbot"});
-    value.show_label = false;
-    value.show_gear = false;
-    value.control_width = 290.0f;
-    return value;
-  }();
-  return widget;
 }
 
 float card_height(size_t rows) {
@@ -146,11 +128,7 @@ Rect content_rect() {
   return {x, y, w, h};
 }
 
-void layout_starter() {
-  Menu& m = menu();
-  const Rect topbar{m.rect.x + px(kSidebarWidth), m.rect.y, m.rect.w - px(kSidebarWidth), px(kTopbarHeight)};
-  scope_widget().rect = {topbar.x + px(24.0f) + px(118.0f) + px(16.0f), topbar.y + px(21.0f), px(290.0f), px(kRowHeight)};
-
+void layout_default() {
   g_cards.clear();
   Page* page = current_page();
   if (!page) return;
@@ -297,20 +275,23 @@ void paint_placeholder(Canvas& canvas) {
   Page* page = current_page();
   const Rect content = content_rect();
   canvas.text({content.x, content.y + px(20.0f)}, g_chrome.text, page ? page->title.c_str() : "Overlay");
-  canvas.text({content.x, content.y + px(48.0f)}, g_chrome.dim,
-              menu().chrome_painter ? "No sections on this page." : "This page arrives with the Script Host.");
+  canvas.text({content.x, content.y + px(48.0f)}, g_chrome.dim, "No content yet.");
 }
 
 void paint_default_chrome(Canvas& canvas, Input& input) {
   canvas.fill_rect(menu().rect, g_chrome.window, px(4.0f));
   canvas.stroke_rect(menu().rect, g_chrome.border, 1.0f, px(4.0f));
+  if (menu().pages.empty()) {
+    paint_placeholder(canvas);
+    return;
+  }
   paint_sidebar(canvas, input);
   paint_topbar(canvas, input);
   paint_cards(canvas);
   if (g_cards.empty()) paint_placeholder(canvas);
 }
 
-void handle_starter_config_actions() {
+void handle_config_actions() {
   Page* page = current_page();
   if (!page || page->title != "Configs") return;
   const std::string name = config::active_name();
@@ -361,8 +342,6 @@ void for_each_active_widget(void (*fn)(Widget&, void*), void* user) {
       for (Widget& widget : section.widgets)
         if (widget.rect.w > 0.0f) fn(widget, user);
   }
-  Widget& scope = scope_widget();
-  if (scope.rect.w > 0.0f) fn(scope, user);
 }
 
 void update_active_widgets(Input& input) {
@@ -442,10 +421,6 @@ void draw() {
   refresh_chrome();
 
   Menu& m = menu();
-  if (!g_starter_checked) {
-    if (m.pages.empty() && !m.chrome_painter) build_starter_menu(m);
-    g_starter_checked = true;
-  }
 
   if (m.rect.w <= 0.0f || g_menu_scale != g_scale) {
     ImVec2 size(viewport->WorkSize.x * 0.96f, viewport->WorkSize.y * 0.94f);
@@ -487,17 +462,17 @@ void draw() {
     OverlayCanvas wrapper{canvas.get()};
     m.chrome_painter(m.chrome_user, &wrapper, &m);
   } else {
-    layout_starter();
+    layout_default();
   }
 
   update_active_widgets(input);
   resolve_focus(input);
-  handle_starter_config_actions();
+  handle_config_actions();
 
   if (!blank) paint_default_chrome(*canvas, input);
 
   paint_active_widgets(*canvas);
-  if (!blank) paint_profile(*canvas);
+  if (!blank && !m.pages.empty()) paint_profile(*canvas);
   paint_active_popups(*canvas);
 
   handle_drag(input);

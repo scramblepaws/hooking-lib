@@ -33,6 +33,4 @@ struct Menu {
 
 Menu& menu();
 
-void build_starter_menu(Menu& menu);
-
 }  // namespace overlay::ui

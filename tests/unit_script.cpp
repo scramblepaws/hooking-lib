@@ -206,6 +206,16 @@ int main() {
   )",
                         "fs"), "reserved device names rejected by the sandbox");
 
+  check(script::execute(R"(
+    local page = ui.page("Colors", "T")
+    local sec = ui.section(page, "S")
+    ui.colorpicker(sec, "c_hex", "Hex", "#8c5cf5")
+    ui.colorpicker(sec, "c_quad", "Quad", 0.55, 0.36, 0.96, 1.0)
+    ui.colorpicker(sec, "c_rgb", "RGB", 140, 92, 245, 255)
+    ui.colorpicker(sec, "c_table", "Table", Color3.fromRGB(140, 92, 245))
+  )",
+                        "colors"), "colorpicker accepts hex, number quads and Color3 tables");
+
   if (g_failures == 0) {
     std::printf("unit_script: all checks passed\n");
     return 0;

@@ -5,7 +5,7 @@
 // External mode: no injection, no hooks. The library owns a topmost,
 // click-through window over the target (or the primary monitor) and runs the
 // same UI + script stack on its own thread. Menu content comes from the
-// scripts folder next to the DLL (scripts/starter.lua builds the default menu).
+// scripts folder next to the DLL; with none the overlay stays empty.
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
   OverlayInitInfo info = {};

@@ -17,7 +17,6 @@ add_library(overlay SHARED
   ui/menu.cpp
   ui/menu_model.cpp
   ui/notifications.cpp
-  ui/starter_menu.cpp
   ui/theme.cpp
   ui/widget.cpp)
 

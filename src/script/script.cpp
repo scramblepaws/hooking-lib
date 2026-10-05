@@ -112,13 +112,12 @@ bool parse_hex_color(const char* text, overlay::ui::Color& out) {
   return true;
 }
 
-// Color is either a hex string (1 stack slot) or four numbers; *used reports how many.
+// Color is a hex string, a Color3-style table, or four numbers; *used reports
+// how many stack slots it consumed. Checks the Lua type explicitly: lua_isstring
+// is also true for numbers, which would misroute the numeric form.
 bool color_arg(lua_State* state, int index, overlay::ui::Color& out, int* used = nullptr) {
-  if (lua_isstring(state, index)) {
-    if (used) *used = 1;
-    return parse_hex_color(lua_tostring(state, index), out);
-  }
-  if (lua_isnumber(state, index)) {
+  const int type = lua_type(state, index);
+  if (type == LUA_TNUMBER) {
     out.r = static_cast<float>(lua_tonumber(state, index));
     out.g = static_cast<float>(lua_tonumber(state, index + 1));
     out.b = static_cast<float>(lua_tonumber(state, index + 2));
@@ -127,6 +126,33 @@ bool color_arg(lua_State* state, int index, overlay::ui::Color& out, int* used =
     if (out.g > 1.0f) out.g /= 255.0f;
     if (out.b > 1.0f) out.b /= 255.0f;
     if (used) *used = 4;
+    return true;
+  }
+  if (type == LUA_TSTRING) {
+    if (used) *used = 1;
+    return parse_hex_color(lua_tostring(state, index), out);
+  }
+  if (type == LUA_TTABLE) {
+    if (used) *used = 1;
+    auto field = [&](const char* upper, const char* lower, float fallback) -> float {
+      lua_getfield(state, index, upper);
+      if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        lua_getfield(state, index, lower);
+      }
+      const float value = lua_isnil(state, -1) ? fallback : static_cast<float>(lua_tonumber(state, -1));
+      lua_pop(state, 1);
+      return value;
+    };
+    out.r = field("R", "r", 0.0f);
+    out.g = field("G", "g", 0.0f);
+    out.b = field("B", "b", 0.0f);
+    out.a = field("A", "a", 1.0f);
+    if (out.r > 1.0f || out.g > 1.0f || out.b > 1.0f) {
+      out.r /= 255.0f;
+      out.g /= 255.0f;
+      out.b /= 255.0f;
+    }
     return true;
   }
   return false;
