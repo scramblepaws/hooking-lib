@@ -166,6 +166,9 @@ OVERLAY_API void overlay_widget_destroy(OverlayWidget* widget);
 /* Blank mode only: the chrome painter assigns each widget's row rect. */
 OVERLAY_API void overlay_widget_set_rect(OverlayWidget* widget, OverlayRect rect);
 
+/* Shifts the widget's row inward by `indent` steps, for nested options. */
+OVERLAY_API void overlay_widget_set_indent(OverlayWidget* widget, int indent);
+
 /* ---- widget values -------------------------------------------------- */
 
 OVERLAY_API void overlay_widget_set_bool(OverlayWidget* widget, int value);

@@ -68,6 +68,7 @@ struct Widget {
   bool show_label = true;
   bool show_gear = true;
   float control_width = 0.0f;
+  int indent = 0;  // row inset, for nested options
 
   // Per-widget sub-settings (the gear popup): accent override and a key that
   // toggles/activates the widget.

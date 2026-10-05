@@ -30,7 +30,7 @@ const char* kIconChevron = u8"\uf0d7";
 
 constexpr float kHeaderHeight = 64.0f;
 constexpr float kCardPadX = 16.0f;
-constexpr float kCardTitleTop = 58.0f;
+constexpr float kCardTitleTop = 46.0f;
 constexpr float kRowHeight = 24.0f;
 constexpr float kRowGap = 14.0f;
 constexpr float kColumnGap = 18.0f;
@@ -101,9 +101,11 @@ float card_height(size_t rows) {
 }
 
 void layout_card(std::deque<Widget>& widgets, const Rect& card) {
-  for (size_t i = 0; i < widgets.size(); ++i)
-    widgets[i].rect = {card.x + px(kCardPadX), card.y + px(kCardTitleTop) + static_cast<float>(i) * px(kRowHeight + kRowGap),
-                       card.w - px(2.0f * kCardPadX), px(kRowHeight)};
+  for (size_t i = 0; i < widgets.size(); ++i) {
+    const float inset = px(kCardPadX + 14.0f * static_cast<float>(widgets[i].indent));
+    widgets[i].rect = {card.x + inset, card.y + px(kCardTitleTop) + static_cast<float>(i) * px(kRowHeight + kRowGap),
+                       card.w - inset - px(kCardPadX), px(kRowHeight)};
+  }
 }
 
 Rect content_rect() {
@@ -127,7 +129,7 @@ void layout_default() {
 
   const Rect content = content_rect();
   const size_t left_count = (sections.size() + 1) / 2;
-  const float left_width = (content.w - px(kColumnGap)) * 0.66f;
+  const float left_width = (content.w - px(kColumnGap)) * 0.60f;
   const float right_width = content.w - px(kColumnGap) - left_width;
   float left_y = content.y;
   float right_y = content.y;
@@ -187,13 +189,17 @@ void paint_header(Canvas& canvas, Input& input) {
   canvas.text({profile_x + avatar + px(10.0f) + name_size.x + px(8.0f), center_y - chevron.y * 0.5f}, g_chrome.dim,
               kIconChevron);
 
-  // Page tabs; the active one sits in a bordered box.
-  float x = header.x + px(24.0f) + brand.x + px(36.0f);
+  // Page tabs, right-aligned before the profile; the active one is boxed.
+  float tabs_width = 0.0f;
+  for (size_t i = 0; i < m.pages.size(); ++i)
+    tabs_width += canvas.measure_text_sized(m.pages[i].title.c_str(), px(15.0f)).x + px(32.0f);
+  float x = profile_x - px(16.0f) - tabs_width;
+  const float min_x = header.x + px(24.0f) + brand.x + px(24.0f);
+  if (x < min_x) x = min_x;  // ponytail: no overflow scrolling
   for (size_t i = 0; i < m.pages.size(); ++i) {
     const char* title = m.pages[i].title.c_str();
     const Vec2 label = canvas.measure_text_sized(title, px(15.0f));
     const Rect tab{x, center_y - px(17.0f), label.x + px(28.0f), px(34.0f)};
-    if (tab.right() > profile_x - px(16.0f)) break;  // ponytail: no overflow scrolling
     const bool selected = static_cast<int>(i) == m.current_page;
     const bool hovered = tab.contains(input.mouse);
     if (selected) {
@@ -216,11 +222,10 @@ void paint_header(Canvas& canvas, Input& input) {
 
 void paint_cards(Canvas& canvas) {
   for (const CardView& card : g_cards) {
-    canvas.fill_rect(card.rect, g_chrome.panel, px(6.0f));
-    canvas.stroke_rect(card.rect, g_chrome.border, 1.0f, px(6.0f));
-    canvas.text_sized({card.rect.x + px(kCardPadX), card.rect.y + px(14.0f)}, g_chrome.text, px(15.0f),
+    canvas.fill_rect(card.rect, g_chrome.panel, 0.0f);
+    canvas.stroke_rect(card.rect, g_chrome.border, 1.0f, 0.0f);
+    canvas.text_sized({card.rect.x + px(kCardPadX), card.rect.y + px(12.0f)}, g_chrome.text, px(15.0f),
                       card.section->title.c_str());
-    canvas.fill_rect({card.rect.x, card.rect.y + px(42.0f), card.rect.w, 1.0f}, g_chrome.border);
     const std::deque<Widget>& widgets = card.section->widgets;
     for (size_t i = 0; i + 1 < widgets.size(); ++i)
       canvas.fill_rect({card.rect.x, widgets[i].rect.bottom() + px(kRowGap) * 0.5f, card.rect.w, 1.0f},
@@ -341,7 +346,7 @@ void apply_scale(float scale) {
 
 void ensure_scale() {
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
-  float fit = viewport->WorkSize.x * 0.96f / 1080.0f;
+  float fit = viewport->WorkSize.x * 0.96f / 900.0f;
   const float fit_height = viewport->WorkSize.y * 0.94f / 640.0f;
   if (fit_height < fit) fit = fit_height;
   apply_scale(g_requested_scale < fit ? g_requested_scale : fit);
@@ -381,7 +386,7 @@ void draw() {
   if (m.rect.w <= 0.0f || g_menu_scale != g_scale) {
     // Fixed design size so the menu is identical in every Target; shrunk only
     // when the Target window cannot fit it.
-    float size_x = px(1080.0f);
+    float size_x = px(900.0f);
     float size_y = px(640.0f);
     const float max_x = viewport->WorkSize.x * 0.96f;
     const float max_y = viewport->WorkSize.y * 0.94f;

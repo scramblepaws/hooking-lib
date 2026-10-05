@@ -286,6 +286,10 @@ void overlay_widget_set_rect(OverlayWidget* handle, OverlayRect rect) {
   if (overlay::ui::Widget* w = widget_of(handle)) w->rect = to_ui(rect);
 }
 
+void overlay_widget_set_indent(OverlayWidget* handle, int indent) {
+  if (overlay::ui::Widget* w = widget_of(handle)) w->indent = indent < 0 ? 0 : indent;
+}
+
 void overlay_widget_set_bool(OverlayWidget* handle, int value) {
   overlay::ui::Widget* w = widget_of(handle);
   if (w) {

@@ -117,9 +117,9 @@ void paint_notifications(Canvas& canvas) {
     label.a *= alpha;
 
     const Rect box{x, y, width, toast_height};
-    canvas.fill_rect(box, background, 4.0f * scale);
-    canvas.stroke_rect(box, border, 1.0f, 4.0f * scale);
-    canvas.fill_rect({box.x, box.y, 3.0f * scale, box.h}, accent_bar, 2.0f * scale);
+    canvas.fill_rect(box, background, 0.0f);
+    canvas.stroke_rect(box, border, 1.0f, 0.0f);
+    canvas.fill_rect({box.x, box.y, 3.0f * scale, box.h}, accent_bar, 0.0f);
     canvas.text({box.x + padding, box.y + (box.h - size.y) * 0.5f}, label, it->text.c_str());
 
     if (top)
@@ -143,8 +143,8 @@ void paint_notifications(Canvas& canvas) {
     Color label = text_color;
     label.a *= alpha;
 
-    canvas.fill_rect(box, background, 4.0f * scale);
-    canvas.stroke_rect(box, border, 1.0f, 4.0f * scale);
+    canvas.fill_rect(box, background, 0.0f);
+    canvas.stroke_rect(box, border, 1.0f, 0.0f);
     canvas.fill_circle({box.x + padding * 0.6f, box.y + box.h * 0.5f}, 3.0f * scale, dot);
     canvas.text({box.x + padding + 4.0f * scale, box.y + (box.h - size.y) * 0.5f}, label, it->text.c_str());
     event_y -= box.h + 6.0f * scale;

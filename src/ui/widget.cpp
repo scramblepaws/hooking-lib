@@ -110,10 +110,18 @@ Rect reset_rect(const Rect& popup, float scale) {
 
 void paint_row_chrome(const Widget& widget, Canvas& canvas, const Rect&) {
   const float scale = canvas.scale();
+  const Rect control = control_rect(widget, scale);
   if (widget.show_label && !widget.label.empty()) {
     const Color text = style_color(widget, "text", theme().text);
-    const Vec2 size = canvas.measure_text(widget.label.c_str());
-    canvas.text({widget.rect.x, widget.rect.y + (widget.rect.h - size.y) * 0.5f}, text, widget.label.c_str());
+    const float left = control.x - (widget.show_gear ? kGearGap * scale + kGearSize * scale : 0.0f);
+    const float max_width = left - 8.0f * scale - widget.rect.x;
+    std::string label = widget.label;
+    const Vec2 size = canvas.measure_text(label.c_str());
+    if (size.x > max_width) {
+      while (label.size() > 1 && canvas.measure_text((label + "...").c_str()).x > max_width) label.pop_back();
+      label += "...";
+    }
+    canvas.text({widget.rect.x, widget.rect.y + (widget.rect.h - size.y) * 0.5f}, text, label.c_str());
   }
   if (widget.show_gear) {
     const Color color = widget.state.settings_open ? style_color(widget, "accent", theme().accent)
@@ -256,24 +264,21 @@ void paint_keybind(const Widget& widget, Canvas& canvas) {
   const Rect control = control_rect(widget, scale);
   paint_row_chrome(widget, canvas, control);
 
-  const float rounding = style_rounding(widget, theme().rounding) * scale;
-  const Color field = style_color(widget, "field", theme().field);
-  const Color border = style_color(widget, "border", theme().border);
   const Color accent = style_color(widget, "accent", theme().accent);
   const Color text = style_color(widget, "text", theme().text);
   const Color dim = style_color(widget, "text-dim", theme().text_dim);
-  canvas.fill_rect(control, field, rounding);
-  canvas.stroke_rect(control, widget.state.capturing ? accent : border, 1.0f, rounding);
 
-  char name[32];
-  const char* label = nullptr;
+  char name[32] = {};
+  std::string label;
   if (widget.state.capturing) {
-    label = "...";
+    label = "[...]";
   } else {
     key_name(widget_key(widget).code, name, sizeof(name));
-    label = name;
+    label = std::string("[") + name + "]";
   }
-  canvas.text_centered(control, widget.state.capturing ? dim : text, label);
+  const Vec2 size = canvas.measure_text(label.c_str());
+  const Color color = widget.state.capturing ? accent : (widget_key(widget).code ? text : dim);
+  canvas.text({control.right() - size.x, widget.rect.y + (widget.rect.h - size.y) * 0.5f}, color, label.c_str());
 }
 
 void paint_textinput(const Widget& widget, Canvas& canvas) {
@@ -797,20 +802,20 @@ void paint_settings_popup(const Widget& widget, Canvas& canvas) {
   for (int i = 1; i < 9; ++i) colors[i] = kSwatchPresets[i - 1];
   for (int i = 0; i < 9; ++i) {
     const Rect box = swatch_rect(popup, i, scale);
-    canvas.fill_rect(box, colors[i], 3.0f * scale);
+    canvas.fill_rect(box, colors[i], 0.0f);
     const bool selected =
         i == 0 ? !widget.has_accent : (widget.has_accent && same_color(widget.accent_override, colors[i]));
     if (selected) {
-      canvas.stroke_rect(box, text, 2.0f, 3.0f * scale);
+      canvas.stroke_rect(box, text, 2.0f, 0.0f);
     } else {
-      canvas.stroke_rect(box, widget.state.hovered_swatch == i ? accent : border, 1.0f, 3.0f * scale);
+      canvas.stroke_rect(box, widget.state.hovered_swatch == i ? accent : border, 1.0f, 0.0f);
     }
   }
 
   const Rect bind = bind_rect(popup, scale);
   canvas.text({popup.x + pad, bind.y + 3.0f * scale}, dim, "Bind");
-  canvas.fill_rect(bind, style_color(widget, "field", theme().field), 3.0f * scale);
-  canvas.stroke_rect(bind, widget.state.capturing ? accent : border, 1.0f, 3.0f * scale);
+  canvas.fill_rect(bind, style_color(widget, "field", theme().field), 0.0f);
+  canvas.stroke_rect(bind, widget.state.capturing ? accent : border, 1.0f, 0.0f);
   char key[32] = {};
   key_name(widget.bind_key, key, sizeof(key));
   canvas.text_centered(bind, widget.state.capturing ? dim : text, widget.state.capturing ? "..." : key);
