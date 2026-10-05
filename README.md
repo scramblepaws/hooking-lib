@@ -24,6 +24,7 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - External mode: `overlay_init` with `OVERLAY_FLAG_EXTERNAL` gives the library its own topmost, click-through, color-keyed window over a target (or the primary monitor), running the same UI and script stack on its own thread. No injection, no hooks
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
+- Mouse handling while the menu is open: the Target's `ClipCursor` is lifted and `SetCursorPos` recentring (raw mouse look) is blocked, so the pointer can reach the UI; the software cursor is drawn by ImGui and the Target's clip is restored when the menu closes
 - Frame log at `build/bin/overlay.log`
 
 ## Requirements

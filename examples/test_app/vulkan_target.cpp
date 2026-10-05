@@ -6,6 +6,7 @@
 
 extern bool g_resize_pending;
 extern bool g_vulkan_recreate;
+void apply_cursor_lock(HWND hwnd);
 
 namespace {
 
@@ -290,6 +291,7 @@ int run_vulkan(HWND hwnd) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
+    apply_cursor_lock(hwnd);
     if (g_resize_pending) {
       g_resize_pending = false;
       recreate_swapchain();

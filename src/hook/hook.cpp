@@ -37,6 +37,8 @@ using CreateFactory2Fn = HRESULT(STDMETHODCALLTYPE*)(UINT, REFIID, void**);
 using D3D12CreateDeviceFn = HRESULT(STDMETHODCALLTYPE*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
 using CreateQueueFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_COMMAND_QUEUE_DESC*, REFIID, void**);
 using CreateSwapChainForHwndFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
+using ClipCursorFn = BOOL(WINAPI*)(const RECT*);
+using SetCursorPosFn = BOOL(WINAPI*)(int, int);
 
 using VkCreateInstanceFn = VkResult(VKAPI_PTR*)(const VkInstanceCreateInfo*, const VkAllocationCallbacks*, VkInstance*);
 using VkCreateWin32SurfaceFn = VkResult(VKAPI_PTR*)(VkInstance, const VkWin32SurfaceCreateInfoKHR*,
@@ -60,6 +62,11 @@ CreateFactory1Fn g_create_factory1 = nullptr;
 CreateFactory2Fn g_create_factory2 = nullptr;
 D3D12CreateDeviceFn g_d3d12_create_device = nullptr;
 CreateQueueFn g_create_queue = nullptr;
+ClipCursorFn g_clip_cursor = nullptr;
+SetCursorPosFn g_set_cursor_pos = nullptr;
+// The Target's last requested cursor clip; re-applied when the menu closes.
+RECT g_game_clip = {};
+bool g_has_game_clip = false;
 VkCreateInstanceFn g_vk_create_instance = nullptr;
 VkCreateWin32SurfaceFn g_vk_create_win32_surface = nullptr;
 VkCreateDeviceFn g_vk_create_device = nullptr;
@@ -117,6 +124,14 @@ void poll_hotkeys() {
     const bool open = !st.menu_open.load();
     st.menu_open.store(open);
     log("menu %s", open ? "open" : "closed");
+    // Games clip the cursor for raw mouse look; release it while the menu is
+    // up so the pointer can reach the UI, and restore their clip after.
+    if (g_clip_cursor) {
+      if (open)
+        g_clip_cursor(nullptr);
+      else if (g_has_game_clip)
+        g_clip_cursor(&g_game_clip);
+    }
   }
   g_toggle_down = toggle_down;
 
@@ -196,6 +211,7 @@ void fault(const char* where) {
 }
 
 void begin_shutdown() {
+  if (g_clip_cursor) g_clip_cursor(g_has_game_clip ? &g_game_clip : nullptr);
   render::shutdown();
   if (g_wndproc) SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_wndproc));
   g_shutting_down.store(true);
@@ -679,6 +695,28 @@ void create_vulkan_capture_hooks() {
   log("vulkan: %d capture hooks installed", hooked);
 }
 
+// While the menu is open the mouse belongs to the overlay: remember what the
+// Target clips to, but hand the pointer a free range. Games that re-centre
+// the cursor every frame (raw mouse look) go through the SetCursorPos block.
+BOOL WINAPI hk_clip_cursor(const RECT* rect) {
+  InFlightGuard guard;
+  if (g_shutting_down.load()) return g_clip_cursor(rect);
+  if (rect) {
+    g_game_clip = *rect;
+    g_has_game_clip = true;
+  } else if (!state().menu_open.load()) {
+    g_has_game_clip = false;
+  }
+  if (state().menu_open.load()) return g_clip_cursor(nullptr);
+  return g_clip_cursor(rect);
+}
+
+BOOL WINAPI hk_set_cursor_pos(int x, int y) {
+  InFlightGuard guard;
+  if (!g_shutting_down.load() && state().menu_open.load()) return FALSE;
+  return g_set_cursor_pos(x, y);
+}
+
 bool create_hooks() {
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
@@ -720,6 +758,14 @@ bool create_hooks() {
   void** vtbl = *reinterpret_cast<void***>(sc);
   const MH_STATUS s1 = MH_CreateHook(vtbl[8], reinterpret_cast<LPVOID>(&hk_present), reinterpret_cast<LPVOID*>(&g_present));
   const MH_STATUS s2 = MH_CreateHook(vtbl[13], reinterpret_cast<LPVOID>(&hk_resize), reinterpret_cast<LPVOID*>(&g_resize));
+  if (HMODULE user32 = LoadLibraryW(L"user32.dll")) {
+    if (FARPROC fn = GetProcAddress(user32, "ClipCursor"))
+      MH_CreateHook(reinterpret_cast<LPVOID>(fn), reinterpret_cast<LPVOID>(&hk_clip_cursor),
+                    reinterpret_cast<LPVOID*>(&g_clip_cursor));
+    if (FARPROC fn = GetProcAddress(user32, "SetCursorPos"))
+      MH_CreateHook(reinterpret_cast<LPVOID>(fn), reinterpret_cast<LPVOID>(&hk_set_cursor_pos),
+                    reinterpret_cast<LPVOID*>(&g_set_cursor_pos));
+  }
   const MH_STATUS s3 = MH_EnableHook(MH_ALL_HOOKS);
 
   sc->Release();

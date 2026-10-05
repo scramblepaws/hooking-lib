@@ -119,6 +119,51 @@ try {
       if ($rebinds -lt 2) { throw "expected 2 rebinds, saw $rebinds" }
       return "$rebinds rebinds survived"
     }
+    Invoke-Step "menu releases the cursor" {
+      Stop-Targets
+      Reset-Log
+      & (Join-Path $bin "injector.exe") --no-wait --launch (Join-Path $bin "test_target.exe") --cursor-lock 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "injector failed" }
+      if (-not (Wait-Log "render ready" 12)) { throw "render never became ready" }
+      Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class CursorProbe {
+ [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+ [DllImport("user32.dll")] public static extern bool GetClipCursor(out RECT r);
+ [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+ [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+ [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+}
+"@
+      $proc = Get-Process test_target
+      $h = $proc.MainWindowHandle
+      $wr = New-Object CursorProbe+RECT
+      [CursorProbe]::GetWindowRect($h, [ref]$wr) | Out-Null
+      $center_x = ($wr.L + $wr.R) / 2
+      $p = New-Object CursorProbe+POINT
+      [CursorProbe]::SetCursorPos(200, 200) | Out-Null
+      Start-Sleep -Milliseconds 400
+      [CursorProbe]::GetCursorPos([ref]$p) | Out-Null
+      if ([math]::Abs($p.X - $center_x) -gt 120) { throw "target is not locking the cursor" }
+      [CursorProbe]::SetForegroundWindow($h) | Out-Null
+      Start-Sleep -Milliseconds 300
+      [CursorProbe]::keybd_event(0x2E, 0, 0, [UIntPtr]::Zero)
+      Start-Sleep -Milliseconds 100
+      [CursorProbe]::keybd_event(0x2E, 0, 2, [UIntPtr]::Zero)
+      Start-Sleep -Milliseconds 500
+      [CursorProbe]::SetCursorPos(200, 200) | Out-Null
+      Start-Sleep -Milliseconds 500
+      [CursorProbe]::GetCursorPos([ref]$p) | Out-Null
+      $clip = New-Object CursorProbe+RECT
+      [CursorProbe]::GetClipCursor([ref]$clip) | Out-Null
+      Stop-Targets
+      if ($p.X -ne 200 -or $p.Y -ne 200) { throw "cursor not released with the menu open ($($p.X),$($p.Y))" }
+      if ($clip.L -ne 0 -or $clip.T -ne 0) { throw "cursor clip not lifted" }
+      return "clip lifted, recentring blocked"
+    }
     Invoke-Step "sdk consumer from zip" {
       $zip = Get-ChildItem (Join-Path $root "build\dist") -Filter "overlay-sdk-*.zip" | Select-Object -First 1
       if (-not $zip) { throw "sdk zip missing" }

@@ -8,7 +8,21 @@
 
 bool g_resize_pending = false;
 bool g_vulkan_recreate = false;
+bool g_cursor_lock = false;
 int run_vulkan(HWND hwnd);
+
+// Mimics a raw-input game: pins the cursor to the client centre and clips it.
+void apply_cursor_lock(HWND hwnd) {
+  if (!g_cursor_lock) return;
+  RECT client = {};
+  GetClientRect(hwnd, &client);
+  POINT center = {client.right / 2, client.bottom / 2};
+  ClientToScreen(hwnd, &center);
+  SetCursorPos(center.x, center.y);
+  RECT window = {};
+  GetWindowRect(hwnd, &window);
+  ClipCursor(&window);
+}
 
 namespace {
 
@@ -102,6 +116,7 @@ int run_dx11(HWND hwnd) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
+    apply_cursor_lock(hwnd);
     if (g_resize_pending) {
       g_resize_pending = false;
       RECT client = {};
@@ -195,6 +210,7 @@ int run_dx12(HWND hwnd) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
+    apply_cursor_lock(hwnd);
     if (g_resize_pending) {
       g_resize_pending = false;
       RECT client = {};
@@ -274,6 +290,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
   const bool dx12 = wcsstr(GetCommandLineW(), L"--dx12") != nullptr;
   const bool vulkan = wcsstr(GetCommandLineW(), L"--vulkan") != nullptr;
   g_vulkan_recreate = wcsstr(GetCommandLineW(), L"--vk-recreate") != nullptr;
+  g_cursor_lock = wcsstr(GetCommandLineW(), L"--cursor-lock") != nullptr;
   g_mode = vulkan ? Mode::Vulkan : (dx12 ? Mode::Dx12 : Mode::Dx11);
 
   WNDCLASSEXW wc = {};
