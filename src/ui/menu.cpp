@@ -236,8 +236,8 @@ void paint_placeholder(Canvas& canvas) {
 }
 
 void paint_default_chrome(Canvas& canvas, Input& input) {
-  canvas.fill_rect(menu().rect, g_chrome.window, px(6.0f));
-  canvas.stroke_rect(menu().rect, g_chrome.border, 1.0f, px(6.0f));
+  canvas.fill_rect(menu().rect, g_chrome.window, 0.0f);
+  canvas.stroke_rect(menu().rect, g_chrome.border, 1.0f, 0.0f);
   if (menu().pages.empty()) {
     paint_placeholder(canvas);
     return;
