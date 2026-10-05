@@ -24,7 +24,7 @@ Toasts and the event feed are script/dev facing: `overlay_notify("...")`, `overl
 
 ## Scripting (Luau)
 
-Every `*.lua` in `<dll dir>/scripts/` runs at startup on a sandboxed VM and is hot-reloaded on change. Scripts own the menu when at least one exists; with no scripts the Overlay stays empty until the host adds pages through the C ABI. A page titled `Configs` with `config_name` / `config_save` / `config_load` widgets gets config handling from the library.
+Every `*.lua` in `<dll dir>/scripts/` runs at startup on a sandboxed VM and is hot-reloaded on change. Scripts own the menu when at least one exists; with no scripts the Overlay stays empty until the host adds pages through the C ABI. Buttons with ids `config_save` / `config_load`, together with a `config_name` text input, get config handling from the library on any page.
 
 ```lua
 local page = ui.page("Home", "Root")

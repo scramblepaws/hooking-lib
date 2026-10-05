@@ -249,7 +249,7 @@ void paint_default_chrome(Canvas& canvas, Input& input) {
 
 void handle_config_actions() {
   Page* page = current_page();
-  if (!page || page->title != "Configs") return;
+  if (!page) return;
   const std::string name = config::active_name();
   for (Section& section : page->sections) {
     for (Widget& widget : section.widgets) {
