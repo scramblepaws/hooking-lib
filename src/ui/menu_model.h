@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -8,21 +9,23 @@
 
 namespace overlay::ui {
 
+// Deques, not vectors: the C ABI hands out element pointers as opaque handles,
+// so elements must not move when sibling pages/sections/widgets are added.
 struct Section {
   std::string title;
-  std::vector<Widget> widgets;
+  std::deque<Widget> widgets;
 };
 
 struct Page {
   std::string title;
   std::string nav_section;
-  std::vector<Section> sections;
+  std::deque<Section> sections;
 };
 
 struct Menu {
   Rect rect;
   int current_page = 0;
-  std::vector<Page> pages;
+  std::deque<Page> pages;
   void* chrome_user = nullptr;
   void (*chrome_painter)(void* user, void* canvas, void* menu_handle) = nullptr;
 };

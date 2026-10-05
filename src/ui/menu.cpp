@@ -130,7 +130,7 @@ float card_height(size_t rows) {
             static_cast<float>(rows - 1) * kRowGap);
 }
 
-void layout_card(std::vector<Widget>& widgets, const Rect& card) {
+void layout_card(std::deque<Widget>& widgets, const Rect& card) {
   for (size_t i = 0; i < widgets.size(); ++i)
     widgets[i].rect = {card.x + px(kCardPadX), card.y + px(kCardTitleTop) + static_cast<float>(i) * px(kRowHeight + kRowGap),
                        card.w - px(2.0f * kCardPadX), px(kRowHeight)};
@@ -287,7 +287,7 @@ void paint_cards(Canvas& canvas) {
     canvas.text({card.rect.x + px(kCardPadX), card.rect.y + px(kCardPadY)}, g_chrome.text, card.section->title.c_str());
     canvas.fill_rect({card.rect.x + px(kCardPadX), card.rect.y + px(37.0f), card.rect.w - px(2.0f * kCardPadX), 1.0f},
                      g_chrome.border);
-    const std::vector<Widget>& widgets = card.section->widgets;
+    const std::deque<Widget>& widgets = card.section->widgets;
     for (size_t i = 0; i + 1 < widgets.size(); ++i)
       canvas.fill_rect({card.rect.x + px(kCardPadX), widgets[i].rect.bottom() + px(kRowGap) * 0.5f,
                         card.rect.w - px(2.0f * kCardPadX), 1.0f},
