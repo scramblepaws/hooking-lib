@@ -27,6 +27,7 @@ constexpr float kTextInputWidth = 150.0f;
 constexpr float kSwatchWidth = 42.0f;
 constexpr float kButtonWidth = 120.0f;
 constexpr float kGearGap = 14.0f;
+constexpr float kGearSize = 18.0f;
 constexpr float kPopupItemHeight = 30.0f;
 constexpr float kPopupPad = 6.0f;
 constexpr float kPickerSize = 180.0f;
@@ -35,6 +36,19 @@ constexpr float kPickerPad = 8.0f;
 constexpr int kPickerCells = 24;
 constexpr int kPickerHueCells = 36;
 constexpr size_t kTextLimit = 48;
+
+// Gear sub-settings popup.
+constexpr float kSettingsWidth = 184.0f;
+constexpr float kSettingsHeight = 142.0f;
+constexpr float kSettingsPad = 12.0f;
+constexpr float kSwatchSize = 20.0f;
+constexpr float kSwatchGap = 6.0f;
+constexpr int kSwatchColumns = 5;
+const Color kSwatchPresets[8] = {
+    {0.85f, 0.33f, 0.42f, 1.0f}, {0.92f, 0.45f, 0.25f, 1.0f}, {0.90f, 0.75f, 0.30f, 1.0f},
+    {0.45f, 0.80f, 0.40f, 1.0f}, {0.30f, 0.72f, 0.72f, 1.0f}, {0.35f, 0.60f, 0.95f, 1.0f},
+    {0.60f, 0.45f, 0.95f, 1.0f}, {0.85f, 0.45f, 0.80f, 1.0f},
+};
 
 float clamp01(float value) { return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value); }
 
@@ -59,7 +73,42 @@ Rect control_rect(const Widget& widget, float scale) {
   return {widget.rect.right() - width, widget.rect.y + (widget.rect.h - height) * 0.5f, width, height};
 }
 
-void paint_row_chrome(const Widget& widget, Canvas& canvas, const Rect& control) {
+Rect gear_rect(const Widget& widget, float scale) {
+  const Rect control = control_rect(widget, scale);
+  const float size = kGearSize * scale;
+  return {control.x - kGearGap * scale - size, widget.rect.y + (widget.rect.h - size) * 0.5f, size, size};
+}
+
+Rect settings_popup_rect(const Widget& widget, float scale) {
+  const Rect gear = gear_rect(widget, scale);
+  const float width = kSettingsWidth * scale;
+  float x = gear.right() - width;
+  const float min_x = widget.rect.x + 60.0f * scale;
+  if (x < min_x) x = min_x;
+  return {x, widget.rect.bottom() + 4.0f * scale, width, kSettingsHeight * scale};
+}
+
+Rect swatch_rect(const Rect& popup, int index, float scale) {
+  const float pad = kSettingsPad * scale;
+  const float cell = kSwatchSize * scale;
+  const float gap = kSwatchGap * scale;
+  return {popup.x + pad + (index % kSwatchColumns) * (cell + gap),
+          popup.y + 40.0f * scale + (index / kSwatchColumns) * (cell + gap), cell, cell};
+}
+
+Rect bind_rect(const Rect& popup, float scale) {
+  const float pad = kSettingsPad * scale;
+  return {popup.x + pad + 52.0f * scale, popup.y + 92.0f * scale, popup.w - pad * 2.0f - 52.0f * scale,
+          22.0f * scale};
+}
+
+Rect reset_rect(const Rect& popup, float scale) {
+  const float pad = kSettingsPad * scale;
+  return {popup.x + pad + 52.0f * scale, popup.y + 118.0f * scale, popup.w - pad * 2.0f - 52.0f * scale,
+          18.0f * scale};
+}
+
+void paint_row_chrome(const Widget& widget, Canvas& canvas, const Rect&) {
   const float scale = canvas.scale();
   if (widget.show_label && !widget.label.empty()) {
     const Color text = style_color(widget, "text", theme().text);
@@ -67,9 +116,11 @@ void paint_row_chrome(const Widget& widget, Canvas& canvas, const Rect& control)
     canvas.text({widget.rect.x, widget.rect.y + (widget.rect.h - size.y) * 0.5f}, text, widget.label.c_str());
   }
   if (widget.show_gear) {
-    const Color dim = style_color(widget, "text-dim", theme().text_dim);
+    const Color color = widget.state.settings_open ? style_color(widget, "accent", theme().accent)
+                                                   : style_color(widget, "text-dim", theme().text_dim);
+    const Rect gear = gear_rect(widget, scale);
     const Vec2 size = canvas.measure_text(kIconGear);
-    canvas.text({control.x - kGearGap * scale - size.x, widget.rect.y + (widget.rect.h - size.y) * 0.5f}, dim, kIconGear);
+    canvas.text({gear.x + (gear.w - size.x) * 0.5f, gear.y + (gear.h - size.y) * 0.5f}, color, kIconGear);
   }
 }
 
@@ -637,7 +688,62 @@ const char* widget_class_name(WidgetClass klass) {
 
 Rect widget_control_rect(const Widget& widget, float scale) { return control_rect(widget, scale); }
 
+void update_settings(Widget& widget, Input& input) {
+  if (!widget.state.settings_open) {
+    if (widget.show_gear && input.mouse_clicked && !input.click_consumed) {
+      const Rect gear = gear_rect(widget, input.scale);
+      if (gear.contains(input.mouse)) {
+        widget.state.settings_open = true;
+        input.click_consumed = true;
+      }
+    }
+    return;
+  }
+
+  const Rect popup = settings_popup_rect(widget, input.scale);
+  widget.state.popup = popup;
+  widget.state.hovered_swatch = -1;
+  for (int i = 0; i < 9; ++i)
+    if (swatch_rect(popup, i, input.scale).contains(input.mouse)) widget.state.hovered_swatch = i;
+
+  if (widget.state.capturing && input.captured_key != 0) {
+    widget.bind_key = input.captured_key;
+    widget.state.capturing = false;
+    input.captured_key = 0;
+    return;
+  }
+
+  if (!input.mouse_clicked || input.click_consumed) return;
+  const Rect bind = bind_rect(popup, input.scale);
+  const Rect reset = reset_rect(popup, input.scale);
+  if (widget.state.hovered_swatch == 0) {
+    widget.has_accent = false;
+  } else if (widget.state.hovered_swatch > 0) {
+    widget.has_accent = true;
+    widget.accent_override = kSwatchPresets[widget.state.hovered_swatch - 1];
+  } else if (bind.contains(input.mouse)) {
+    widget.state.capturing = true;
+  } else if (reset.contains(input.mouse)) {
+    widget.has_accent = false;
+    widget.bind_key = 0;
+    widget.state.capturing = false;
+  } else if (!popup.contains(input.mouse) && !gear_rect(widget, input.scale).contains(input.mouse)) {
+    widget.state.settings_open = false;
+  }
+  input.click_consumed = true;
+}
+
 void widget_update(Widget& widget, Input& input) {
+  update_settings(widget, input);
+  if (widget.state.settings_open) return;
+
+  if (widget.bind_key != 0 && !widget.state.capturing && input.captured_key == widget.bind_key) {
+    if (bool* value = std::get_if<bool>(&widget.value)) {
+      *value = !*value;
+      input.captured_key = 0;
+    }
+  }
+
   switch (widget.klass) {
     case WidgetClass::Toggle:
     case WidgetClass::Checkbox: update_toggle(widget, input); break;
@@ -668,9 +774,59 @@ void widget_paint(const Widget& widget, Canvas& canvas) {
   }
 }
 
+bool same_color(const Color& a, const Color& b) {
+  return std::fabs(a.r - b.r) < 0.01f && std::fabs(a.g - b.g) < 0.01f && std::fabs(a.b - b.b) < 0.01f;
+}
+
+void paint_settings_popup(const Widget& widget, Canvas& canvas) {
+  const float scale = canvas.scale();
+  const Rect popup = widget.state.popup;
+  const float rounding = style_rounding(widget, theme().rounding) * scale;
+  const Color border = style_color(widget, "border", theme().border);
+  const Color text = style_color(widget, "text", theme().text);
+  const Color dim = style_color(widget, "text-dim", theme().text_dim);
+  const Color accent = style_color(widget, "accent", theme().accent);
+  const float pad = kSettingsPad * scale;
+
+  canvas.fill_rect(popup, style_color(widget, "panel", theme().panel), rounding);
+  canvas.stroke_rect(popup, border, 1.0f, rounding);
+  canvas.text_sized({popup.x + pad, popup.y + 8.0f * scale}, dim, 10.0f * scale, "WIDGET SETTINGS");
+
+  Color colors[9] = {};
+  colors[0] = theme().accent;
+  for (int i = 1; i < 9; ++i) colors[i] = kSwatchPresets[i - 1];
+  for (int i = 0; i < 9; ++i) {
+    const Rect box = swatch_rect(popup, i, scale);
+    canvas.fill_rect(box, colors[i], 3.0f * scale);
+    const bool selected =
+        i == 0 ? !widget.has_accent : (widget.has_accent && same_color(widget.accent_override, colors[i]));
+    if (selected) {
+      canvas.stroke_rect(box, text, 2.0f, 3.0f * scale);
+    } else {
+      canvas.stroke_rect(box, widget.state.hovered_swatch == i ? accent : border, 1.0f, 3.0f * scale);
+    }
+  }
+
+  const Rect bind = bind_rect(popup, scale);
+  canvas.text({popup.x + pad, bind.y + 3.0f * scale}, dim, "Bind");
+  canvas.fill_rect(bind, style_color(widget, "field", theme().field), 3.0f * scale);
+  canvas.stroke_rect(bind, widget.state.capturing ? accent : border, 1.0f, 3.0f * scale);
+  char key[32] = {};
+  key_name(widget.bind_key, key, sizeof(key));
+  canvas.text_centered(bind, widget.state.capturing ? dim : text, widget.state.capturing ? "..." : key);
+
+  const Rect reset = reset_rect(popup, scale);
+  canvas.text({popup.x + pad, reset.y + 1.0f * scale}, dim, "Reset");
+  canvas.text_centered(reset, dim, "Clear accent and bind");
+}
+
 void widget_paint_popup(const Widget& widget, Canvas& canvas) {
-  if ((widget.klass != WidgetClass::Dropdown && widget.klass != WidgetClass::ColorPicker) || !widget.state.open ||
-      widget.painter || widget.c_painter)
+  if (widget.painter || widget.c_painter) return;
+  if (widget.state.settings_open) {
+    paint_settings_popup(widget, canvas);
+    return;
+  }
+  if ((widget.klass != WidgetClass::Dropdown && widget.klass != WidgetClass::ColorPicker) || !widget.state.open)
     return;
 
   const float scale = canvas.scale();

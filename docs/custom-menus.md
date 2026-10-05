@@ -43,6 +43,7 @@ end)
 ```
 
 - Creation: `ui.page(title, nav_section)`, `ui.section(page, title)`, then `ui.toggle/checkbox/slider/dropdown/keybind/text_input/colorpicker/button(section, id, label, ...)`. Ids are the config keys. Colors (colorpicker, canvas painters) accept a hex string (`"#8c5cf5"`), a `Color3` table, or four raw numbers.
+- Every default-painted widget has a gear that opens sub-settings: accent colour (presets or the theme default), a key bind that toggles/activates the widget, and reset.
 - Properties: `ui.get_bool/set_bool`, `get/set_number`, `get/set_int`, `get/set_text`, `get/set_key`, `get/set_color` (hex string or r,g,b,a).
 - Painters: `ui.set_painter(id, function(state, canvas) ...)`; state exposes `value, hovered, focused, clicked, anim`, row rect `x,y,w,h` and control rect `cx,cy,cw,ch`. Canvas methods: `rect`, `outline`, `circle`, `text`, `text_centered`, `measure`, `scale`, `clip_push`, `clip_pop`; colors accept `"#rrggbb"`, `"#rgb"`, `"#rrggbbaa"` or four numbers.
 - Scheduling: `task.wait(s)`, `task.spawn(fn, ...)`, `task.defer`, `task.delay(s, fn)`; scripts run on the render thread with a 5 ms per-resume budget and an interrupt that stops runaway loops.

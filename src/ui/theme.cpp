@@ -215,6 +215,7 @@ float theme_rounding(float fallback) {
 }
 
 Color style_color(const Widget& widget, const char* property, Color fallback) {
+  if (widget.has_accent && std::strcmp(property, "accent") == 0) return widget.accent_override;
   Color out = fallback;
   resolve(widget_class_name(widget.klass), widget.id, property, theme_color(property, fallback), out);
   return out;

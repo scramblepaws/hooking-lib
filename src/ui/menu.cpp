@@ -32,7 +32,7 @@ constexpr float kHeaderHeight = 64.0f;
 constexpr float kCardPadX = 16.0f;
 constexpr float kCardTitleTop = 58.0f;
 constexpr float kRowHeight = 24.0f;
-constexpr float kRowGap = 16.0f;
+constexpr float kRowGap = 14.0f;
 constexpr float kColumnGap = 18.0f;
 
 ImFont* g_ui_font = nullptr;
@@ -97,7 +97,7 @@ Page* current_page() {
 }
 
 float card_height(size_t rows) {
-  return px(kCardTitleTop + static_cast<float>(rows) * kRowHeight + static_cast<float>(rows - 1) * kRowGap + 18.0f);
+  return px(kCardTitleTop + static_cast<float>(rows) * kRowHeight + static_cast<float>(rows - 1) * kRowGap + 14.0f);
 }
 
 void layout_card(std::deque<Widget>& widgets, const Rect& card) {
@@ -341,8 +341,8 @@ void apply_scale(float scale) {
 
 void ensure_scale() {
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
-  float fit = viewport->WorkSize.x * 0.96f / 1230.0f;
-  const float fit_height = viewport->WorkSize.y * 0.94f / 590.0f;
+  float fit = viewport->WorkSize.x * 0.96f / 1080.0f;
+  const float fit_height = viewport->WorkSize.y * 0.94f / 640.0f;
   if (fit_height < fit) fit = fit_height;
   apply_scale(g_requested_scale < fit ? g_requested_scale : fit);
 }
@@ -379,11 +379,15 @@ void draw() {
   Menu& m = menu();
 
   if (m.rect.w <= 0.0f || g_menu_scale != g_scale) {
-    ImVec2 size(viewport->WorkSize.x * 0.96f, viewport->WorkSize.y * 0.94f);
-    const float cap_width = px(1260.0f);
-    const float cap_height = px(800.0f);
-    if (size.x > cap_width) size.x = cap_width;
-    if (size.y > cap_height) size.y = cap_height;
+    // Fixed design size so the menu is identical in every Target; shrunk only
+    // when the Target window cannot fit it.
+    float size_x = px(1080.0f);
+    float size_y = px(640.0f);
+    const float max_x = viewport->WorkSize.x * 0.96f;
+    const float max_y = viewport->WorkSize.y * 0.94f;
+    if (size_x > max_x) size_x = max_x;
+    if (size_y > max_y) size_y = max_y;
+    ImVec2 size(size_x, size_y);
     if (m.rect.w <= 0.0f) {
       m.rect = {viewport->WorkPos.x + (viewport->WorkSize.x - size.x) * 0.5f,
                 viewport->WorkPos.y + (viewport->WorkSize.y - size.y) * 0.5f, size.x, size.y};

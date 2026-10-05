@@ -36,7 +36,9 @@ struct WidgetState {
   bool open = false;
   bool focused = false;
   bool capturing = false;
+  bool settings_open = false;
   int hovered_item = -1;
+  int hovered_swatch = -1;
   int armed_frame = 0;
   float anim = 0.0f;
   float blink = 0.0f;
@@ -66,6 +68,12 @@ struct Widget {
   bool show_label = true;
   bool show_gear = true;
   float control_width = 0.0f;
+
+  // Per-widget sub-settings (the gear popup): accent override and a key that
+  // toggles/activates the widget.
+  bool has_accent = false;
+  Color accent_override{};
+  int bind_key = 0;
 
   Painter painter;
   void* c_painter_user = nullptr;

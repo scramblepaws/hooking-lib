@@ -27,6 +27,39 @@ void expect_format(const char* input, const char* expected) {
   }
 }
 
+void check(bool condition, const char* what) {
+  if (!condition) {
+    std::printf("FAIL %s\n", what);
+    ++g_failures;
+  }
+}
+
+void test_gear_settings() {
+  overlay::ui::Widget toggle = overlay::ui::make_toggle("gearbind", "Bound", false);
+  toggle.rect = {50.0f, 0.0f, 200.0f, 24.0f};
+
+  overlay::ui::Input open_input;
+  open_input.scale = 1.0f;
+  open_input.mouse = {185.0f, 12.0f};
+  open_input.mouse_clicked = true;
+  overlay::ui::widget_update(toggle, open_input);
+  check(toggle.state.settings_open, "gear opens widget settings");
+
+  overlay::ui::Input close_input;
+  close_input.scale = 1.0f;
+  close_input.mouse = {400.0f, 400.0f};
+  close_input.mouse_clicked = true;
+  overlay::ui::widget_update(toggle, close_input);
+  check(!toggle.state.settings_open, "clicking away closes widget settings");
+
+  toggle.bind_key = 'X';
+  overlay::ui::Input key_input;
+  key_input.scale = 1.0f;
+  key_input.captured_key = 'X';
+  overlay::ui::widget_update(toggle, key_input);
+  check(overlay::ui::widget_bool(toggle), "bind key toggles the widget");
+}
+
 }  // namespace
 
 int main() {
@@ -60,6 +93,8 @@ int main() {
   expect_format("100%", "%.0f");
   expect_format(nullptr, "%.0f");
   expect_format("", "%.0f");
+
+  test_gear_settings();
 
   if (g_failures == 0) {
     std::printf("unit_widget: all checks passed\n");
