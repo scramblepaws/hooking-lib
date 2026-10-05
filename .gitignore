@@ -12,3 +12,5 @@ out/
 .vscode/
 *.user
 imgui.ini
+bindings/**/bin/
+bindings/**/obj/
