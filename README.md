@@ -2,12 +2,13 @@
 
 An internal library that renders a scriptable UI (Luau, Roblox-style) on top of a game or app process, across DX11/DX12/Vulkan, in injected and external modes.
 
-Status: pre-v1. The native menu stack works end-to-end (injected DX11); scripting is next.
+Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Drawing) works end-to-end on DX11/DX12/Vulkan injected targets and in external mode.
 
 ## What works today
 
 - Injected DX11 overlay: MinHook trampolines on `Present`/`ResizeBuffers`, clean eject, WndProc reclaim
 - DX12 support: the swapchain's device is detected and rendering is submitted on the Target's own present queue (captured by hooking the `CreateDXGIFactory*`/`D3D12CreateDevice` exports and swapping the per-instance `CreateCommandQueue` vtable entry). The DLL must be present before the Target creates its device - use `injector --launch` (or host mode); mid-run injection into an established DX12 device logs and stays dormant rather than crashing
+- Vulkan support: the loader's `vkCreateInstance`/`vkCreateDevice`/`vkCreateWin32SurfaceKHR`/`vkCreateSwapchainKHR`/`vkQueuePresentKHR` entry points are hooked, and `vkGetInstanceProcAddr`/`vkGetDeviceProcAddr` hand out our detours so dispatch tables built at runtime (volk et al) stay on our path. The overlay draws into the presented swapchain image at `vkQueuePresentKHR` time on the Target's own queue. Once the Target has cached our pointers, eject turns the hooks off and stops rendering but leaves the module loaded
 - Hardened lifecycle: eject drains in-flight detours/messages before unload (no timing guesses); host-linked builds remove hooks but stay loaded; device-removed/reset triggers re-init; UI faults are contained (C++ exceptions; full SEH on MSVC builds)
 - Borderless menu rendered through a backend-agnostic Canvas (no ImGui windows or widgets in the UI layer)
 - Retained widgets: Toggle, Checkbox, Slider, Dropdown, Keybind, TextInput, ColorPicker
@@ -26,8 +27,7 @@ Status: pre-v1. The native menu stack works end-to-end (injected DX11); scriptin
 
 ## Not built yet
 
-- Vulkan backend
-- Drawing images on DX12 (DX11 decodes and renders them)
+- Drawing images on DX12 and Vulkan (DX11 decodes and renders them)
 
 ## Requirements
 
@@ -46,7 +46,7 @@ cmake --build build
 Outputs (in `build/bin/`):
 
 - `overlay.dll` - the injected overlay
-- `test_target.exe` - minimal DX11 window to inject into (`--dx12` for the DX12 target)
+- `test_target.exe` - minimal window to inject into (`--dx12` or `--vulkan` for those backends)
 - `sdk_consumer.exe` - public-API example: links the DLL, builds a custom menu, blank-mode chrome
 - `external_host.exe` - external mode: topmost click-through overlay over the primary monitor; scripts build the menu; Del toggles, End exits
 - `injector.exe` - remote LoadLibrary injector
@@ -107,11 +107,11 @@ The version lives in `include/overlay/overlay_c.h` and flows into the CMake pack
 include/overlay/     public facade (init/shutdown/running) - thin so far
 src/core/            context state, logging, module paths, config store
 src/hook/            MinHook swapchain hooks, WndProc, input capture
-src/render/          ImGui context + DX11 backend, font/DPI bootstrap
+src/render/          ImGui context + DX11/DX12/Vulkan backends, textures, font/DPI bootstrap
 src/script/          Luau host: sandbox, scheduler, ui/fs bindings, hot reload
 src/ui/              Canvas, widgets, painters, theme, notifications, menu
 scripts/             *.lua loaded at startup and on change (the starter menu lives here)
-examples/test_app/   DX11 target for smoke tests
+examples/test_app/   DX11/DX12/Vulkan target for smoke tests
 tools/injector/      injector CLI
 assets/fonts/        Roboto-Medium.ttf, fa-solid-900.ttf
 assets/theme.css     shipped stylesheet

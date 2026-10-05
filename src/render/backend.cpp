@@ -16,6 +16,7 @@
 #include "render/dx11.h"
 #include "render/dx12.h"
 #include "render/textures.h"
+#include "render/vulkan.h"
 #include "script/script.h"
 #include "ui/menu.h"
 
@@ -27,6 +28,7 @@ enum class Api {
   Unknown,
   Dx11,
   Dx12,
+  Vulkan,
 };
 
 Api g_api = Api::Unknown;
@@ -59,6 +61,20 @@ bool is_dx12(IDXGISwapChain* sc) {
 }  // namespace
 
 bool ready() { return g_ready; }
+
+static void begin_ui() {
+  ui::set_scale(ui_scale(g_hwnd));
+  const bool menu_open = state().menu_open.load();
+  if (menu_open) {
+    ui::draw();
+  } else {
+    state().captured_key.store(0);
+    state().char_count.store(0);
+  }
+  ui::draw_overlays();
+  script::tick(ImGui::GetTime());
+  ImGui::GetIO().MouseDrawCursor = menu_open;
+}
 
 bool init(IDXGISwapChain* sc, void* hwnd) {
   if (g_ready) return true;
@@ -111,23 +127,44 @@ void frame(IDXGISwapChain* sc) {
     default: return;
   }
 
-  ui::set_scale(ui_scale(g_hwnd));
-  const bool menu_open = state().menu_open.load();
-  if (menu_open) {
-    ui::draw();
-  } else {
-    state().captured_key.store(0);
-    state().char_count.store(0);
-  }
-  ui::draw_overlays();
-  script::tick(ImGui::GetTime());
-  ImGui::GetIO().MouseDrawCursor = menu_open;
+  begin_ui();
 
   switch (g_api) {
     case Api::Dx11: dx11::render(); break;
     case Api::Dx12: dx12::render(); break;
     default: break;
   }
+}
+
+bool init_vulkan(void* hwnd, const vulkan::Target& target) {
+  if (g_ready) return g_api == Api::Vulkan;
+  g_hwnd = hwnd;
+
+  if (!ImGui::GetCurrentContext()) ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  io.IniFilename = nullptr;
+  ImGui::StyleColorsDark();
+
+  g_api = Api::Vulkan;
+  if (!vulkan::init(hwnd, target)) {
+    g_api = Api::Unknown;
+    return false;
+  }
+
+  ui::init(ui_scale(hwnd));
+  script::start();
+  script::set_texture_provider(&texture_for);
+  g_ready = true;
+  log("render backend: vulkan");
+  return true;
+}
+
+void frame_vulkan(void* queue, void* swapchain, uint32_t image_index) {
+  if (!g_ready || g_api != Api::Vulkan) return;
+  vulkan::new_frame();
+  begin_ui();
+  vulkan::render(queue, swapchain, image_index);
 }
 
 void shutdown() {
@@ -139,6 +176,7 @@ void shutdown() {
   switch (g_api) {
     case Api::Dx11: dx11::shutdown(); break;
     case Api::Dx12: dx12::shutdown(); break;
+    case Api::Vulkan: vulkan::shutdown(); break;
     default: break;
   }
   ImGui_ImplWin32_Shutdown();

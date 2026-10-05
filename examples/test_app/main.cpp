@@ -6,11 +6,15 @@
 
 #include <cstdint>
 
+bool g_resize_pending = false;
+int run_vulkan(HWND hwnd);
+
 namespace {
 
 enum class Mode {
   Dx11,
   Dx12,
+  Vulkan,
 };
 
 Mode g_mode = Mode::Dx11;
@@ -24,7 +28,6 @@ ID3D12DescriptorHeap* g_rtv_heap12 = nullptr;
 ID3D12Resource* g_buffers12[8] = {};
 bool g_presented12[8] = {};
 UINT g_rtv_size12 = 0;
-bool g_resize_pending = false;
 
 void release_dx12_targets() {
   for (ID3D12Resource*& buffer : g_buffers12) {
@@ -268,7 +271,8 @@ int run_dx12(HWND hwnd) {
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
   const bool dx12 = wcsstr(GetCommandLineW(), L"--dx12") != nullptr;
-  g_mode = dx12 ? Mode::Dx12 : Mode::Dx11;
+  const bool vulkan = wcsstr(GetCommandLineW(), L"--vulkan") != nullptr;
+  g_mode = vulkan ? Mode::Vulkan : (dx12 ? Mode::Dx12 : Mode::Dx11);
 
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
@@ -281,14 +285,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
 
   RECT rect = {0, 0, 1280, 720};
   AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
-  HWND hwnd = CreateWindowExW(0, wc.lpszClassName,
-                              dx12 ? L"Overlay Test Target (DX12) (Del=menu, End=eject, Esc=quit)"
-                                   : L"Overlay Test Target (DX11) (Del=menu, End=eject, Esc=quit)",
-                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left,
-                              rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
+  const wchar_t* title = vulkan ? L"Overlay Test Target (Vulkan) (Del=menu, End=eject, Esc=quit)"
+                                : (dx12 ? L"Overlay Test Target (DX12) (Del=menu, End=eject, Esc=quit)"
+                                        : L"Overlay Test Target (DX11) (Del=menu, End=eject, Esc=quit)");
+  HWND hwnd = CreateWindowExW(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                              rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
   ShowWindow(hwnd, show);
   SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 
   if (wcsstr(GetCommandLineW(), L"--wait")) Sleep(4000);
+  if (vulkan) return run_vulkan(hwnd);
   return dx12 ? run_dx12(hwnd) : run_dx11(hwnd);
 }

@@ -31,7 +31,24 @@ FetchContent_Declare(luau
   GIT_TAG 0.741
   GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(imgui minhook yyjson luau)
+# Vulkan headers + volk loader. volk resolves the loader at runtime, so no
+# import library is needed; volk.c is compiled directly like MinHook's sources.
+FetchContent_Declare(vulkan_headers
+  GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+  GIT_TAG vulkan-sdk-1.4.304.1
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _not_a_cmake_project)
+FetchContent_Declare(volk
+  GIT_REPOSITORY https://github.com/zeux/volk.git
+  GIT_TAG vulkan-sdk-1.4.304.1
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _not_a_cmake_project)
+
+FetchContent_MakeAvailable(imgui minhook yyjson luau vulkan_headers volk)
+
+add_library(volk STATIC ${volk_SOURCE_DIR}/volk.c)
+target_include_directories(volk PUBLIC ${volk_SOURCE_DIR} ${vulkan_headers_SOURCE_DIR}/include)
+target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
 
 add_library(imgui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -40,12 +57,13 @@ add_library(imgui STATIC
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
-  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 target_include_directories(imgui PUBLIC
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends)
-target_compile_definitions(imgui PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(imgui PUBLIC d3d11 d3d12 dxgi d3dcompiler dwmapi)
+target_compile_definitions(imgui PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX IMGUI_IMPL_VULKAN_USE_VOLK)
+target_link_libraries(imgui PUBLIC d3d11 d3d12 dxgi d3dcompiler dwmapi volk)
 
 add_library(minhook STATIC
   ${minhook_SOURCE_DIR}/src/buffer.c
