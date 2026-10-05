@@ -146,6 +146,7 @@ CONTEXT.md           glossary - read this before naming things
 ## Documentation
 
 - [docs/custom-menus.md](docs/custom-menus.md) - how to build custom menus with the current widget stack
+- [docs/known-issues.md](docs/known-issues.md) - every known limit, what you will see, and what to do
 - [CONTEXT.md](CONTEXT.md) - canonical vocabulary (Widget, Painter, Canvas, Toast, ...)
 - [docs/adr/](docs/adr/) - why ImGui is wrapped, why Luau, why behavior plus replaceable painters
 

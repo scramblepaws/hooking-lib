@@ -21,6 +21,7 @@ $sdkStage = Join-Path $build "stage\sdk"
 Remove-Item $sdkStage -Recurse -Force -ErrorAction SilentlyContinue
 cmake --install $build --prefix $sdkStage --config Release
 Copy-Item (Join-Path $root "NOTICE.md") $sdkStage
+Copy-Item (Join-Path $root "docs\known-issues.md") $sdkStage
 Compress-Archive -Path (Join-Path $sdkStage "*") -DestinationPath (Join-Path $out "overlay-sdk-$version-win64.zip")
 
 $runnerStage = Join-Path $build "stage\runner"
@@ -31,6 +32,7 @@ Copy-Item (Join-Path $build "bin\injector.exe") $runnerStage
 Copy-Item (Join-Path $build "bin\assets") $runnerStage -Recurse
 Copy-Item (Join-Path $build "bin\scripts") $runnerStage -Recurse
 Copy-Item (Join-Path $root "NOTICE.md") $runnerStage
+Copy-Item (Join-Path $root "docs\known-issues.md") $runnerStage
 Compress-Archive -Path (Join-Path $runnerStage "*") -DestinationPath (Join-Path $out "overlay-runner-$version-win64.zip")
 
 Write-Host "packaged overlay ${version}:"

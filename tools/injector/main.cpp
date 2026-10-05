@@ -291,7 +291,9 @@ int main(int argc, char** argv) {
   }
   std::printf("[1/6] target pid %lu (%s)\n", pid, target);
   if (overlay_ready_event_exists(pid)) {
-    std::printf("overlay is already injected into pid %lu - eject it first (End key), then re-inject\n", pid);
+    std::printf("overlay is already attached to pid %lu (or was ejected with the module still loaded by the Target)\n",
+                pid);
+    std::printf("restart the Target to inject again\n");
     return finish(1);
   }
 
