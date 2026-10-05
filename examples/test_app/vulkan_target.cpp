@@ -5,6 +5,7 @@
 #include <vector>
 
 extern bool g_resize_pending;
+extern bool g_vulkan_recreate;
 
 namespace {
 
@@ -23,6 +24,11 @@ VkExtent2D g_extent = {1280, 720};
 uint32_t g_family = 0;
 uint32_t g_image_count = 2;
 HWND g_hwnd = nullptr;
+VkCommandPool g_pool = VK_NULL_HANDLE;
+VkCommandBuffer g_cmd = VK_NULL_HANDLE;
+VkSemaphore g_image_available = VK_NULL_HANDLE;
+VkSemaphore g_render_done = VK_NULL_HANDLE;
+VkFence g_fence = VK_NULL_HANDLE;
 
 bool check(VkResult result, const wchar_t* what) {
   if (result == VK_SUCCESS) return true;
@@ -104,12 +110,14 @@ void destroy_swapchain_images() {
 }
 
 bool create_device_and_swapchain(HWND hwnd) {
-  VkWin32SurfaceCreateInfoKHR surface_info = {};
-  surface_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-  surface_info.hinstance = GetModuleHandleW(nullptr);
-  surface_info.hwnd = hwnd;
-  if (!check(vkCreateWin32SurfaceKHR(g_instance, &surface_info, nullptr, &g_surface), L"vkCreateWin32SurfaceKHR"))
-    return false;
+  if (!g_surface) {
+    VkWin32SurfaceCreateInfoKHR surface_info = {};
+    surface_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    surface_info.hinstance = GetModuleHandleW(nullptr);
+    surface_info.hwnd = hwnd;
+    if (!check(vkCreateWin32SurfaceKHR(g_instance, &surface_info, nullptr, &g_surface), L"vkCreateWin32SurfaceKHR"))
+      return false;
+  }
 
   uint32_t count = 0;
   vkEnumeratePhysicalDevices(g_instance, &count, nullptr);
@@ -196,6 +204,56 @@ bool recreate_swapchain() {
   return create_swapchain_images();
 }
 
+bool create_frame_objects() {
+  VkCommandPoolCreateInfo pool_info = {};
+  pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+  pool_info.queueFamilyIndex = g_family;
+  if (!check(vkCreateCommandPool(g_device, &pool_info, nullptr, &g_pool), L"vkCreateCommandPool")) return false;
+  VkCommandBufferAllocateInfo alloc = {};
+  alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  alloc.commandPool = g_pool;
+  alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  alloc.commandBufferCount = 1;
+  if (!check(vkAllocateCommandBuffers(g_device, &alloc, &g_cmd), L"vkAllocateCommandBuffers")) return false;
+
+  VkSemaphoreCreateInfo sem_info = {};
+  sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  vkCreateSemaphore(g_device, &sem_info, nullptr, &g_image_available);
+  vkCreateSemaphore(g_device, &sem_info, nullptr, &g_render_done);
+  VkFenceCreateInfo fence_info = {};
+  fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+  vkCreateFence(g_device, &fence_info, nullptr, &g_fence);
+  return true;
+}
+
+void destroy_frame_objects() {
+  destroy_swapchain_images();
+  if (g_image_available) vkDestroySemaphore(g_device, g_image_available, nullptr);
+  if (g_render_done) vkDestroySemaphore(g_device, g_render_done, nullptr);
+  if (g_fence) vkDestroyFence(g_device, g_fence, nullptr);
+  if (g_pool) vkDestroyCommandPool(g_device, g_pool, nullptr);
+  g_image_available = VK_NULL_HANDLE;
+  g_render_done = VK_NULL_HANDLE;
+  g_fence = VK_NULL_HANDLE;
+  g_cmd = VK_NULL_HANDLE;
+  g_pool = VK_NULL_HANDLE;
+}
+
+// Mirrors a TDR/GPU-switch recovery: everything device-bound goes away, the
+// surface and instance stay.
+void destroy_device_stack() {
+  destroy_frame_objects();
+  if (g_swapchain) vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
+  if (g_render_pass) vkDestroyRenderPass(g_device, g_render_pass, nullptr);
+  vkDestroyDevice(g_device, nullptr);
+  g_swapchain = VK_NULL_HANDLE;
+  g_render_pass = VK_NULL_HANDLE;
+  g_device = VK_NULL_HANDLE;
+  g_queue = VK_NULL_HANDLE;
+}
+
 }  // namespace
 
 int run_vulkan(HWND hwnd) {
@@ -219,33 +277,10 @@ int run_vulkan(HWND hwnd) {
   volkLoadInstance(g_instance);
 
   if (!create_device_and_swapchain(hwnd)) return 1;
+  if (!create_frame_objects()) return 1;
 
-  VkCommandPoolCreateInfo pool_info = {};
-  pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-  pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-  pool_info.queueFamilyIndex = g_family;
-  VkCommandPool pool = VK_NULL_HANDLE;
-  check(vkCreateCommandPool(g_device, &pool_info, nullptr, &pool), L"vkCreateCommandPool");
-  VkCommandBuffer cmd = VK_NULL_HANDLE;
-  VkCommandBufferAllocateInfo alloc = {};
-  alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  alloc.commandPool = pool;
-  alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  alloc.commandBufferCount = 1;
-  check(vkAllocateCommandBuffers(g_device, &alloc, &cmd), L"vkAllocateCommandBuffers");
-
-  VkSemaphoreCreateInfo sem_info = {};
-  sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-  VkSemaphore image_available = VK_NULL_HANDLE;
-  VkSemaphore render_done = VK_NULL_HANDLE;
-  vkCreateSemaphore(g_device, &sem_info, nullptr, &image_available);
-  vkCreateSemaphore(g_device, &sem_info, nullptr, &render_done);
-  VkFenceCreateInfo fence_info = {};
-  fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-  VkFence fence = VK_NULL_HANDLE;
-  vkCreateFence(g_device, &fence_info, nullptr, &fence);
-
+  int frames = 0;
+  int recreations_left = g_vulkan_recreate ? 2 : 0;
   float t = 0;
   bool running = true;
   MSG msg = {};
@@ -260,22 +295,31 @@ int run_vulkan(HWND hwnd) {
       recreate_swapchain();
     }
 
-    vkWaitForFences(g_device, 1, &fence, VK_TRUE, 1000000000ull);
-    vkResetFences(g_device, 1, &fence);
+    ++frames;
+    if (recreations_left > 0 && (frames == 180 || frames == 420)) {
+      --recreations_left;
+      vkDeviceWaitIdle(g_device);
+      destroy_device_stack();
+      if (!create_device_and_swapchain(hwnd) || !create_frame_objects()) return 1;
+    }
+
+    vkWaitForFences(g_device, 1, &g_fence, VK_TRUE, 1000000000ull);
+    vkResetFences(g_device, 1, &g_fence);
 
     uint32_t index = 0;
-    VkResult acquired = vkAcquireNextImageKHR(g_device, g_swapchain, 1000000000ull, image_available, VK_NULL_HANDLE, &index);
+    VkResult acquired =
+        vkAcquireNextImageKHR(g_device, g_swapchain, 1000000000ull, g_image_available, VK_NULL_HANDLE, &index);
     if (acquired == VK_ERROR_OUT_OF_DATE_KHR) {
       recreate_swapchain();
       continue;
     }
     if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) break;
 
-    vkResetCommandBuffer(cmd, 0);
+    vkResetCommandBuffer(g_cmd, 0);
     VkCommandBufferBeginInfo begin = {};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
+    vkBeginCommandBuffer(g_cmd, &begin);
     t += 0.016f;
 
     VkClearValue clear = {};
@@ -290,26 +334,26 @@ int run_vulkan(HWND hwnd) {
     pass.renderArea.extent = g_extent;
     pass.clearValueCount = 1;
     pass.pClearValues = &clear;
-    vkCmdBeginRenderPass(cmd, &pass, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdEndRenderPass(cmd);
-    vkEndCommandBuffer(cmd);
+    vkCmdBeginRenderPass(g_cmd, &pass, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdEndRenderPass(g_cmd);
+    vkEndCommandBuffer(g_cmd);
 
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit = {};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.waitSemaphoreCount = 1;
-    submit.pWaitSemaphores = &image_available;
+    submit.pWaitSemaphores = &g_image_available;
     submit.pWaitDstStageMask = &wait_stage;
     submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
+    submit.pCommandBuffers = &g_cmd;
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_done;
-    vkQueueSubmit(g_queue, 1, &submit, fence);
+    submit.pSignalSemaphores = &g_render_done;
+    vkQueueSubmit(g_queue, 1, &submit, g_fence);
 
     VkPresentInfoKHR present = {};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_done;
+    present.pWaitSemaphores = &g_render_done;
     present.swapchainCount = 1;
     present.pSwapchains = &g_swapchain;
     present.pImageIndices = &index;
@@ -318,15 +362,8 @@ int run_vulkan(HWND hwnd) {
   }
 
   vkDeviceWaitIdle(g_device);
-  destroy_swapchain_images();
-  vkDestroySemaphore(g_device, image_available, nullptr);
-  vkDestroySemaphore(g_device, render_done, nullptr);
-  vkDestroyFence(g_device, fence, nullptr);
-  vkDestroyCommandPool(g_device, pool, nullptr);
-  vkDestroySwapchainKHR(g_device, g_swapchain, nullptr);
-  vkDestroyRenderPass(g_device, g_render_pass, nullptr);
+  destroy_device_stack();
   vkDestroySurfaceKHR(g_instance, g_surface, nullptr);
-  vkDestroyDevice(g_device, nullptr);
   vkDestroyInstance(g_instance, nullptr);
   return 0;
 }

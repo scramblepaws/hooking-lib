@@ -46,6 +46,7 @@ using VkGetDeviceQueueFn = void(VKAPI_PTR*)(VkDevice, uint32_t, uint32_t, VkQueu
 using VkCreateSwapchainFn = VkResult(VKAPI_PTR*)(VkDevice, const VkSwapchainCreateInfoKHR*,
                                                  const VkAllocationCallbacks*, VkSwapchainKHR*);
 using VkDestroySwapchainFn = void(VKAPI_PTR*)(VkDevice, VkSwapchainKHR, const VkAllocationCallbacks*);
+using VkDestroyDeviceFn = void(VKAPI_PTR*)(VkDevice, const VkAllocationCallbacks*);
 using VkQueuePresentFn = VkResult(VKAPI_PTR*)(VkQueue, const VkPresentInfoKHR*);
 using VkGetInstanceProcAddrFn = PFN_vkVoidFunction(VKAPI_PTR*)(VkInstance, const char*);
 using VkGetDeviceProcAddrFn = PFN_vkVoidFunction(VKAPI_PTR*)(VkDevice, const char*);
@@ -64,6 +65,7 @@ VkCreateDeviceFn g_vk_create_device = nullptr;
 VkGetDeviceQueueFn g_vk_get_device_queue = nullptr;
 VkCreateSwapchainFn g_vk_create_swapchain = nullptr;
 VkDestroySwapchainFn g_vk_destroy_swapchain = nullptr;
+VkDestroyDeviceFn g_vk_destroy_device = nullptr;
 VkQueuePresentFn g_vk_present = nullptr;
 VkGetInstanceProcAddrFn g_vk_gipa = nullptr;
 VkGetDeviceProcAddrFn g_vk_gdpa = nullptr;
@@ -288,6 +290,10 @@ void hook_target_device(ID3D12Device* device) {
   // ID3D12Device : ID3D12Object with slots 3-5 Get/SetPrivateData, 6 SetName,
   // 7 GetNodeCount, so CreateCommandQueue is slot 8.
   void** vtbl = *reinterpret_cast<void***>(device);
+  // D3D12 objects can share one static vtable across device instances; never
+  // re-patch an entry we already own or the "original" becomes our detour and
+  // every call recurses until the stack dies.
+  if (vtbl[8] == reinterpret_cast<void*>(&hk_create_queue)) return;
   void* original = nullptr;
   if (hook_vtable_entry(vtbl, 8, reinterpret_cast<void*>(&hk_create_queue), &original))
     g_create_queue = reinterpret_cast<CreateQueueFn>(original);
@@ -303,9 +309,11 @@ void hook_target_factory(IUnknown* unknown) {
     return;
   void** vtbl = *reinterpret_cast<void***>(factory);
   void* original = nullptr;
-  if (hook_vtable_entry(vtbl, 9, reinterpret_cast<void*>(&hk_create_swapchain), &original))
+  if (vtbl[9] != reinterpret_cast<void*>(&hk_create_swapchain) &&
+      hook_vtable_entry(vtbl, 9, reinterpret_cast<void*>(&hk_create_swapchain), &original))
     g_create_swapchain = reinterpret_cast<CreateSwapChainFn>(original);
-  if (hook_vtable_entry(vtbl, 14, reinterpret_cast<void*>(&hk_create_swapchain_hwnd), &original))
+  if (vtbl[14] != reinterpret_cast<void*>(&hk_create_swapchain_hwnd) &&
+      hook_vtable_entry(vtbl, 14, reinterpret_cast<void*>(&hk_create_swapchain_hwnd), &original))
     g_create_swapchain_hwnd = reinterpret_cast<CreateSwapChainForHwndFn>(original);
   factory->Release();
 }
@@ -394,7 +402,9 @@ HRESULT STDMETHODCALLTYPE hk_present(IDXGISwapChain* sc, UINT sync, UINT flags) 
           return g_present(sc, sync, flags);
         }
         if (args.ok) {
-          g_wndproc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndproc)));
+          if (GetWindowLongPtrW(g_hwnd, GWLP_WNDPROC) != reinterpret_cast<LONG_PTR>(&wndproc))
+            g_wndproc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndproc)));
           st.render_ready.store(true);
           log("render ready (hwnd=%p)", g_hwnd);
         } else if (g_init_fail_logs < 3) {
@@ -507,6 +517,27 @@ void VKAPI_PTR hk_vk_destroy_swapchain(VkDevice device, VkSwapchainKHR swapchain
   g_vk_destroy_swapchain(device, swapchain, alloc);
 }
 
+// A Target tearing down its device (TDR, GPU switch, engine re-init) must take
+// our device-bound resources with it. We rebind to the next device by shutting
+// the renderer down here, while the handle is still valid; the present hook
+// lazily re-initializes against the replacement.
+void VKAPI_PTR hk_vk_destroy_device(VkDevice device, const VkAllocationCallbacks* alloc) {
+  InFlightGuard guard;
+  if (!g_shutting_down.load() && device == g_vk_device) {
+    if (render::vulkan::active()) {
+      log("vulkan: device destroyed, renderer will rebind");
+      render::shutdown();
+      state().render_ready.store(false);
+    }
+    g_vk_device = VK_NULL_HANDLE;
+    g_vk_physical = VK_NULL_HANDLE;
+    g_vk_queue = VK_NULL_HANDLE;
+    g_vk_target = {};
+    g_vk_target_logged = false;
+  }
+  g_vk_destroy_device(device, alloc);
+}
+
 VkResult VKAPI_PTR hk_vk_queue_present(VkQueue queue, const VkPresentInfoKHR* info) {
   InFlightGuard guard;
   if (g_shutting_down.load()) return g_vk_present(queue, info);
@@ -522,9 +553,9 @@ VkResult VKAPI_PTR hk_vk_queue_present(VkQueue queue, const VkPresentInfoKHR* in
   const VkSwapchainKHR sc = info->pSwapchains[0];
   if (sc != static_cast<VkSwapchainKHR>(g_vk_target.swapchain)) return g_vk_present(queue, info);
   if (!g_vk_target.queue) g_vk_target.queue = queue;  // the present queue is authoritative
-
   if (!render::ready() && !g_faulted && g_vk_device && g_vk_hwnd) {
-    if (g_init_attempts++ % 60 == 0) {      struct InitArgs {
+    if (g_init_attempts++ % 60 == 0) {
+      struct InitArgs {
         void* hwnd;
         render::vulkan::Target target;
         bool ok;
@@ -538,13 +569,17 @@ VkResult VKAPI_PTR hk_vk_queue_present(VkQueue queue, const VkPresentInfoKHR* in
         fault("render::init_vulkan");
         return g_vk_present(queue, info);
       }
-      if (args.ok) {
-        g_hwnd = g_vk_hwnd;
-        g_wndproc = reinterpret_cast<WNDPROC>(
-            SetWindowLongPtrW(g_vk_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndproc)));
-        st.render_ready.store(true);
-        log("render ready (vulkan hwnd=%p)", g_vk_hwnd);
-      } else if (g_init_fail_logs < 3) {
+        if (args.ok) {
+          g_hwnd = g_vk_hwnd;
+          // Never re-install on top of ourselves: on a renderer rebind our
+          // proc is still installed and SetWindowLongPtr would return it,
+          // making the forward chain call us forever.
+          if (GetWindowLongPtrW(g_vk_hwnd, GWLP_WNDPROC) != reinterpret_cast<LONG_PTR>(&wndproc))
+            g_wndproc = reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(g_vk_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndproc)));
+          st.render_ready.store(true);
+          log("render ready (vulkan hwnd=%p)", g_vk_hwnd);
+        } else if (g_init_fail_logs < 3) {
         ++g_init_fail_logs;
         log("vulkan init failed, will retry");
       }
@@ -598,6 +633,8 @@ PFN_vkVoidFunction wrap_vk_proc(const char* name, PFN_vkVoidFunction real) {
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_swapchain);
   else if (std::strcmp(name, "vkDestroySwapchainKHR") == 0 && g_vk_destroy_swapchain)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_destroy_swapchain);
+  else if (std::strcmp(name, "vkDestroyDevice") == 0 && g_vk_destroy_device)
+    wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_destroy_device);
   else if (std::strcmp(name, "vkCreateDevice") == 0 && g_vk_create_device)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_device);
   else if (std::strcmp(name, "vkCreateInstance") == 0 && g_vk_create_instance)
@@ -647,6 +684,8 @@ void create_vulkan_capture_hooks() {
        reinterpret_cast<LPVOID*>(&g_vk_create_swapchain));
   hook("vkDestroySwapchainKHR", reinterpret_cast<LPVOID>(&hk_vk_destroy_swapchain),
        reinterpret_cast<LPVOID*>(&g_vk_destroy_swapchain));
+  hook("vkDestroyDevice", reinterpret_cast<LPVOID>(&hk_vk_destroy_device),
+       reinterpret_cast<LPVOID*>(&g_vk_destroy_device));
   hook("vkGetDeviceProcAddr", reinterpret_cast<LPVOID>(&hk_vk_get_device_proc_addr),
        reinterpret_cast<LPVOID*>(&g_vk_gdpa));
   hook("vkGetInstanceProcAddr", reinterpret_cast<LPVOID>(&hk_vk_get_instance_proc_addr),

@@ -7,6 +7,7 @@
 #include <cstdint>
 
 bool g_resize_pending = false;
+bool g_vulkan_recreate = false;
 int run_vulkan(HWND hwnd);
 
 namespace {
@@ -272,6 +273,7 @@ int run_dx12(HWND hwnd) {
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
   const bool dx12 = wcsstr(GetCommandLineW(), L"--dx12") != nullptr;
   const bool vulkan = wcsstr(GetCommandLineW(), L"--vulkan") != nullptr;
+  g_vulkan_recreate = wcsstr(GetCommandLineW(), L"--vk-recreate") != nullptr;
   g_mode = vulkan ? Mode::Vulkan : (dx12 ? Mode::Dx12 : Mode::Dx11);
 
   WNDCLASSEXW wc = {};

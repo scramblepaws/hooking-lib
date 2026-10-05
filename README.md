@@ -8,7 +8,7 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 
 - Injected DX11 overlay: MinHook trampolines on `Present`/`ResizeBuffers`, clean eject, WndProc reclaim
 - DX12 support: the swapchain's device is detected and rendering is submitted on the Target's own present queue (captured by hooking the `CreateDXGIFactory*`/`D3D12CreateDevice` exports and swapping the per-instance `CreateCommandQueue` vtable entry). The DLL must be present before the Target creates its device - use `injector --launch` (or host mode); mid-run injection into an established DX12 device logs and stays dormant rather than crashing
-- Vulkan support: the loader's `vkCreateInstance`/`vkCreateDevice`/`vkCreateWin32SurfaceKHR`/`vkCreateSwapchainKHR`/`vkQueuePresentKHR` entry points are hooked, and `vkGetInstanceProcAddr`/`vkGetDeviceProcAddr` hand out our detours so dispatch tables built at runtime (volk et al) stay on our path. The overlay draws into the presented swapchain image at `vkQueuePresentKHR` time on the Target's own queue. Once the Target has cached our pointers, eject turns the hooks off and stops rendering but leaves the module loaded. The DLL must be present before the Target resolves its Vulkan pointers - use `injector --launch`; mid-run injection into an established Vulkan app logs and stays dormant
+- Vulkan support: the loader's `vkCreateInstance`/`vkCreateDevice`/`vkCreateWin32SurfaceKHR`/`vkCreateSwapchainKHR`/`vkQueuePresentKHR` entry points are hooked, and `vkGetInstanceProcAddr`/`vkGetDeviceProcAddr` hand out our detours so dispatch tables built at runtime (volk et al) stay on our path. The overlay draws into the presented swapchain image at `vkQueuePresentKHR` time on the Target's own queue. A Target destroying and recreating its device (TDR, GPU switch, engine re-init) is detected at `vkDestroyDevice` and the renderer rebinds to the replacement automatically. Once the Target has cached our pointers, eject turns the hooks off and stops rendering but leaves the module loaded. The DLL must be present before the Target resolves its Vulkan pointers - use `injector --launch`; mid-run injection into an established Vulkan app logs and stays dormant
 - Hardened lifecycle: eject drains in-flight detours/messages before unload (no timing guesses); host-linked builds remove hooks but stay loaded; device-removed/reset triggers re-init; UI faults are contained (C++ exceptions; full SEH on MSVC builds)
 - Borderless menu rendered through a backend-agnostic Canvas (no ImGui windows or widgets in the UI layer)
 - Retained widgets: Toggle, Checkbox, Slider, Dropdown, Keybind, TextInput, ColorPicker
@@ -25,10 +25,6 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
 - Frame log at `build/bin/overlay.log`
-
-## Not built yet
-
-- Vulkan device replacement mid-session (TDR/GPU switch) needs reinjection
 
 ## Requirements
 
@@ -47,7 +43,7 @@ cmake --build build
 Outputs (in `build/bin/`):
 
 - `overlay.dll` - the injected overlay
-- `test_target.exe` - minimal window to inject into (`--dx12` or `--vulkan` for those backends)
+- `test_target.exe` - minimal window to inject into (`--dx12` or `--vulkan`, and `--vk-recreate` to cycle the Vulkan device mid-run)
 - `sdk_consumer.exe` - public-API example: links the DLL, builds a custom menu, blank-mode chrome
 - `external_host.exe` - external mode: topmost click-through overlay over the primary monitor; scripts build the menu; Del toggles, End exits
 - `injector.exe` - remote LoadLibrary injector
