@@ -172,6 +172,9 @@ OVERLAY_API void overlay_widget_set_indent(OverlayWidget* widget, int indent);
 /* Gives the widget's row a taller box, e.g. a script list panel (0 = default row). */
 OVERLAY_API void overlay_widget_set_height(OverlayWidget* widget, float height);
 
+/* Overrides the control width: >0 fixed layout units, <0 fills the whole row. */
+OVERLAY_API void overlay_widget_set_control_width(OverlayWidget* widget, float width);
+
 /* ---- widget values -------------------------------------------------- */
 
 OVERLAY_API void overlay_widget_set_bool(OverlayWidget* widget, int value);

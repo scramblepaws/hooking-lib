@@ -294,6 +294,10 @@ void overlay_widget_set_height(OverlayWidget* handle, float height) {
   if (overlay::ui::Widget* w = widget_of(handle)) w->height = height < 0.0f ? 0.0f : height;
 }
 
+void overlay_widget_set_control_width(OverlayWidget* handle, float width) {
+  if (overlay::ui::Widget* w = widget_of(handle)) w->control_width = width;
+}
+
 void overlay_widget_set_bool(OverlayWidget* handle, int value) {
   overlay::ui::Widget* w = widget_of(handle);
   if (w) {

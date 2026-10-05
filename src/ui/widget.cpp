@@ -53,6 +53,7 @@ const Color kSwatchPresets[8] = {
 float clamp01(float value) { return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value); }
 
 float control_width(const Widget& widget, float scale) {
+  if (widget.control_width < 0.0f) return widget.rect.w;  // fill the row
   if (widget.control_width > 0.0f) return widget.control_width * scale;
   switch (widget.klass) {
     case WidgetClass::Toggle: return kToggleWidth * scale;
