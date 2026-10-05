@@ -1,0 +1,148 @@
+param(
+  [int]$SoakCycles = 3,
+  [switch]$SkipBuild,
+  [switch]$SkipGpu
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path $PSScriptRoot -Parent
+$bin = Join-Path $root "build\bin"
+$log = Join-Path $bin "overlay.log"
+$script:results = @()
+$script:failed = 0
+
+function Write-Result([string]$name, [bool]$pass, [string]$detail = "") {
+  $script:results += [pscustomobject]@{ Name = $name; Pass = $pass; Detail = $detail }
+  if (-not $pass) { $script:failed++ }
+  $status = if ($pass) { "PASS" } else { "FAIL" }
+  $color = if ($pass) { "Green" } else { "Red" }
+  Write-Host ("  [{0}] {1}{2}" -f $status, $name, $(if ($detail) { " - $detail" } else { "" })) -ForegroundColor $color
+}
+
+function Invoke-Step([string]$name, [scriptblock]$body) {
+  Write-Host "== $name" -ForegroundColor Cyan
+  try {
+    $detail = & $body
+    Write-Result $name ($LASTEXITCODE -eq 0 -or $null -eq $LASTEXITCODE) $detail
+  } catch {
+    Write-Result $name $false $_.Exception.Message
+  }
+}
+
+function Stop-Targets {
+  Get-Process test_target, sdk_consumer, external_host -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Milliseconds 400
+}
+
+function Reset-Log {
+  Set-Content $log ""
+}
+
+function Wait-Log([string]$pattern, [int]$seconds) {
+  for ($i = 0; $i -lt ($seconds * 10); ++$i) {
+    if (Test-Path $log) {
+      if (Select-String -Path $log -Pattern $pattern -Quiet) { return $true }
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  return $false
+}
+
+function Test-InjectedBackend([string]$name, [string[]]$arguments, [int]$waitSeconds, [string]$extraPattern = "") {
+  Stop-Targets
+  Reset-Log
+  $out = & (Join-Path $bin "injector.exe") --no-wait --launch (Join-Path $bin "test_target.exe") @arguments 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "injector failed: $($out | Select-Object -Last 1)" }
+  if (-not (Wait-Log "render ready" $waitSeconds)) { throw "render never became ready" }
+  if ($extraPattern -and -not (Wait-Log $extraPattern $waitSeconds)) { throw "missing log: $extraPattern" }
+  Start-Sleep -Seconds 1
+  $alive = [bool](Get-Process test_target -ErrorAction SilentlyContinue)
+  Stop-Targets
+  if (-not $alive) { throw "target died" }
+  return "ready and alive"
+}
+
+Push-Location $root
+try {
+  Write-Host "overlay ship check" -ForegroundColor White
+
+  if (-not $SkipBuild) {
+    Invoke-Step "build" {
+      & cmake --build build 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+      return "cmake --build"
+    }
+  }
+
+  Invoke-Step "unit tests" {
+    $out = & ctest --test-dir build 2>&1
+    $summary = ($out | Select-String "tests passed").Line
+    if ($LASTEXITCODE -ne 0) { throw $summary }
+    return $summary
+  }
+
+  Invoke-Step "fault containment" {
+    Stop-Targets
+    Reset-Log
+    Start-Process -FilePath (Join-Path $bin "sdk_consumer.exe") -ArgumentList "--crash-painter" | Out-Null
+    if (-not (Wait-Log "salvage: contained exception" 8)) { throw "no containment log" }
+    if (-not (Wait-Log "render abandoned after fault" 4)) { throw "renderer not abandoned" }
+    $alive = [bool](Get-Process sdk_consumer -ErrorAction SilentlyContinue)
+    Stop-Targets
+    if (-not $alive) { throw "process died" }
+    return "access violation contained, process alive"
+  }
+
+  if (-not $SkipGpu) {
+    Invoke-Step "injected DX11" { return (Test-InjectedBackend "dx11" @() 10) }
+    Invoke-Step "injected DX12" { return (Test-InjectedBackend "dx12" @("--dx12") 12) }
+    Invoke-Step "injected Vulkan" { return (Test-InjectedBackend "vulkan" @("--vulkan") 12) }
+    Invoke-Step "Vulkan device replacement" {
+      Stop-Targets
+      Reset-Log
+      $out = & (Join-Path $bin "injector.exe") --no-wait --launch (Join-Path $bin "test_target.exe") --vulkan --vk-recreate 2>&1
+      if ($LASTEXITCODE -ne 0) { throw "injector failed" }
+      if (-not (Wait-Log "render ready" 12)) { throw "render never became ready" }
+      Start-Sleep -Seconds 9
+      $alive = [bool](Get-Process test_target -ErrorAction SilentlyContinue)
+      $rebinds = (Select-String -Path $log -Pattern "device destroyed, renderer will rebind").Count
+      Stop-Targets
+      if (-not $alive) { throw "target died across recreation" }
+      if ($rebinds -lt 2) { throw "expected 2 rebinds, saw $rebinds" }
+      return "$rebinds rebinds survived"
+    }
+  } else {
+    Write-Host "== GPU stages skipped" -ForegroundColor Yellow
+  }
+
+  Invoke-Step "soak" {
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root "tools\soak\soak.ps1") -Cycles $SoakCycles 2>&1
+    $summary = ($out | Select-String "soak:").Line
+    if ($LASTEXITCODE -ne 0) { throw $summary }
+    return $summary
+  }
+
+  Invoke-Step "C# binding" {
+    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { return "dotnet not installed, skipped" }
+    $out = & dotnet run --project (Join-Path $root "bindings\csharp\Example\Example.csproj") -c Release 2>&1
+    $pass = $out | Select-String "PASS" -Quiet
+    if ($LASTEXITCODE -ne 0 -or -not $pass) { throw "smoke test failed" }
+    return "smoke test passed"
+  }
+} finally {
+  Stop-Targets
+  Pop-Location
+}
+
+Write-Host ""
+Write-Host "summary" -ForegroundColor White
+foreach ($r in $script:results) {
+  $status = if ($r.Pass) { "PASS" } else { "FAIL" }
+  Write-Host ("  {0}  {1}" -f $status, $r.Name)
+}
+if ($script:failed -eq 0) {
+  Write-Host "ship check: all stages passed" -ForegroundColor Green
+  exit 0
+}
+Write-Host "ship check: $script:failed stage(s) failed" -ForegroundColor Red
+exit 1

@@ -73,7 +73,10 @@ Injector details:
 ```sh
 ctest --test-dir build --output-on-failure          # unit tests
 powershell -ExecutionPolicy Bypass -File tools/soak/soak.ps1 -Cycles 5
+powershell -ExecutionPolicy Bypass -File tools/ship-check.ps1   # release gate
 ```
+
+`tools/ship-check.ps1` is the release gate: it builds, runs the unit tests, proves fault containment, injects into DX11/DX12/Vulkan targets (including a mid-run Vulkan device replacement), runs the soak, and runs the C# smoke test, then prints a PASS/FAIL summary. `-SkipGpu` skips everything that needs a desktop GPU session, `-SkipBuild` assumes the last build.
 
 The soak harness launches the target, injects, exercises open/click/drag/resize/close, ejects, and asserts the target survives and the eject drained cleanly. It moves the real mouse cursor, so run it when you are not using the machine.
 
