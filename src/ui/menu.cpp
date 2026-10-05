@@ -44,6 +44,17 @@ int g_frame = 0;
 bool g_dragging = false;
 Vec2 g_drag_anchor;
 
+// Tab transition: the active-tab box slides from the previous tab and the page
+// content nudges in from the direction of travel.
+float g_page_anim = 1.0f;
+int g_anim_page = -1;
+float g_page_dir = 1.0f;
+bool g_pill_valid = false;
+Rect g_pill_from{};
+Rect g_pill_to{};
+
+float ease_out(float t) { return t * t * (3.0f - 2.0f * t); }
+
 struct CardView {
   Rect rect;
   const Section* section;
@@ -135,6 +146,7 @@ void layout_default() {
   if (sections.empty()) return;
 
   const Rect content = content_rect();
+  const float slide = (1.0f - ease_out(g_page_anim)) * px(16.0f) * g_page_dir;
   const size_t left_count = (sections.size() + 1) / 2;
   const float left_width = (content.w - px(kColumnGap)) * 0.60f;
   const float right_width = content.w - px(kColumnGap) - left_width;
@@ -143,7 +155,7 @@ void layout_default() {
 
   for (size_t i = 0; i < sections.size(); ++i) {
     const bool left = i < left_count;
-    const float x = left ? content.x : content.x + left_width + px(kColumnGap);
+    const float x = (left ? content.x : content.x + left_width + px(kColumnGap)) + slide;
     const float width = left ? left_width : right_width;
     const float height = card_height(sections[i]->widgets);
     const float y = left ? left_y : right_y;
@@ -196,32 +208,54 @@ void paint_header(Canvas& canvas, Input& input) {
   canvas.text({profile_x + avatar + px(10.0f) + name_size.x + px(8.0f), center_y - chevron.y * 0.5f}, g_chrome.dim,
               kIconChevron);
 
-  // Page tabs, right-aligned before the profile; the active one is boxed.
+  // Page tabs, right-aligned before the profile.
   float tabs_width = 0.0f;
   for (size_t i = 0; i < m.pages.size(); ++i)
     tabs_width += canvas.measure_text_sized(m.pages[i].title.c_str(), px(15.0f)).x + px(32.0f);
   float x = profile_x - px(16.0f) - tabs_width;
   const float min_x = header.x + px(24.0f) + brand.x + px(24.0f);
   if (x < min_x) x = min_x;  // ponytail: no overflow scrolling
-  for (size_t i = 0; i < m.pages.size(); ++i) {
+
+  Rect tabs[32] = {};
+  const size_t tab_count = m.pages.size() < 32 ? m.pages.size() : 32;
+  for (size_t i = 0; i < tab_count; ++i) {
+    const Vec2 label = canvas.measure_text_sized(m.pages[i].title.c_str(), px(15.0f));
+    tabs[i] = {x, center_y - px(17.0f), label.x + px(28.0f), px(34.0f)};
+    x += tabs[i].w + px(4.0f);
+  }
+
+  // Active-tab box: slides from the previous tab while the page transition runs.
+  const int selected_index =
+      m.current_page >= 0 && m.current_page < static_cast<int>(tab_count) ? m.current_page : -1;
+  if (selected_index >= 0) {
+    if (!g_pill_valid) {
+      g_pill_from = tabs[selected_index];
+      g_pill_to = tabs[selected_index];
+      g_pill_valid = true;
+    } else {
+      g_pill_to = tabs[selected_index];
+    }
+    const float t = ease_out(g_page_anim);
+    const Rect pill{g_pill_from.x + (g_pill_to.x - g_pill_from.x) * t,
+                    g_pill_from.y + (g_pill_to.y - g_pill_from.y) * t,
+                    g_pill_from.w + (g_pill_to.w - g_pill_from.w) * t,
+                    g_pill_from.h + (g_pill_to.h - g_pill_from.h) * t};
+    canvas.fill_rect(pill, g_chrome.selected, px(4.0f));
+    canvas.stroke_rect(pill, lighten(g_chrome.border, 0.06f), 1.0f, px(4.0f));
+  }
+
+  for (size_t i = 0; i < tab_count; ++i) {
     const char* title = m.pages[i].title.c_str();
     const Vec2 label = canvas.measure_text_sized(title, px(15.0f));
-    const Rect tab{x, center_y - px(17.0f), label.x + px(28.0f), px(34.0f)};
     const bool selected = static_cast<int>(i) == m.current_page;
-    const bool hovered = tab.contains(input.mouse);
-    if (selected) {
-      canvas.fill_rect(tab, g_chrome.selected, px(4.0f));
-      canvas.stroke_rect(tab, lighten(g_chrome.border, 0.06f), 1.0f, px(4.0f));
-    } else if (hovered) {
-      canvas.fill_rect(tab, g_chrome.hover, px(4.0f));
-    }
-    canvas.text_sized({tab.x + (tab.w - label.x) * 0.5f, center_y - label.y * 0.5f},
+    const bool hovered = tabs[i].contains(input.mouse);
+    if (hovered && !selected) canvas.fill_rect(tabs[i], g_chrome.hover, px(4.0f));
+    canvas.text_sized({tabs[i].x + (tabs[i].w - label.x) * 0.5f, center_y - label.y * 0.5f},
                       selected ? g_chrome.text : g_chrome.dim, px(15.0f), title);
     if (hovered && input.mouse_clicked && !input.click_consumed) {
       m.current_page = static_cast<int>(i);
       input.click_consumed = true;
     }
-    x += tab.w + px(4.0f);
   }
 
   canvas.fill_rect({header.x, header.bottom() - 1.0f, header.w, 1.0f}, g_chrome.border);
@@ -389,6 +423,17 @@ void draw() {
   refresh_chrome();
 
   Menu& m = menu();
+
+  const int page_now = static_cast<int>(m.current_page);
+  if (page_now != g_anim_page) {
+    g_page_dir = (g_anim_page >= 0 && page_now < g_anim_page) ? -1.0f : 1.0f;
+    g_anim_page = page_now;
+    g_page_anim = 0.0f;
+  }
+  if (g_page_anim < 1.0f) {
+    g_page_anim += static_cast<float>(ImGui::GetIO().DeltaTime) * 9.0f;
+    if (g_page_anim > 1.0f) g_page_anim = 1.0f;
+  }
 
   if (m.rect.w <= 0.0f || g_menu_scale != g_scale) {
     // Fixed design size so the menu is identical in every Target; shrunk only

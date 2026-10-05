@@ -328,7 +328,7 @@ void paint_button(const Widget& widget, Canvas& canvas) {
   const Color hover = style_color(widget, "button-hover", theme().button_hover);
   const Color border = style_color(widget, "border", theme().border);
   const Color text = style_color(widget, "text", theme().text);
-  canvas.fill_rect(control, widget.state.hovered || widget.state.held ? hover : button, rounding);
+  canvas.fill_rect(control, lerp(button, hover, widget.state.anim), rounding);
   canvas.stroke_rect(control, border, 1.0f, rounding);
   canvas.text_centered(control, text, widget.label.c_str());
 }
@@ -521,6 +521,9 @@ void update_button(Widget& widget, Input& input) {
   const Rect control = button_rect(widget, input.scale);
   widget.state.hovered = control.contains(input.mouse);
   widget.state.clicked = false;
+  const float target = widget.state.hovered || widget.state.held ? 1.0f : 0.0f;
+  const float speed = input.dt * 14.0f;
+  widget.state.anim += (target - widget.state.anim) * (speed < 1.0f ? speed : 1.0f);
   if (widget.state.hovered && input.mouse_clicked && !input.click_consumed) {
     widget.state.clicked = true;
     input.click_consumed = true;
