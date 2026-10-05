@@ -998,8 +998,6 @@ unsigned long long scripts_stamp() {
 }
 
 void load_scripts(double now) {
-  clear_menu();
-
   std::vector<std::wstring> files;
   const std::wstring pattern = module_directory() + L"scripts\\*.lua";
   WIN32_FIND_DATAW data = {};
@@ -1011,6 +1009,10 @@ void load_scripts(double now) {
     FindClose(handle);
   }
   std::sort(files.begin(), files.end());
+
+  // Scripts own the menu only when scripts exist; host-built menus must
+  // survive an empty or missing scripts folder (and the starter fallback).
+  if (!files.empty()) clear_menu();
 
   int loaded = 0;
   for (const std::wstring& path : files) {
