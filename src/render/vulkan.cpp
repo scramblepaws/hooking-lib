@@ -25,6 +25,7 @@ VkRenderPass g_pass = VK_NULL_HANDLE;
 VkCommandPool g_pool = VK_NULL_HANDLE;
 VkCommandBuffer g_cmd = VK_NULL_HANDLE;
 VkFence g_fence = VK_NULL_HANDLE;
+bool g_fence_pending = false;
 
 VkSwapchainKHR g_swapchain = VK_NULL_HANDLE;
 VkFormat g_format = VK_FORMAT_UNDEFINED;
@@ -260,6 +261,21 @@ void render(void* queue, void* swapchain, uint32_t image_index) {
   ImDrawData* draw = ImGui::GetDrawData();
   if (!draw) return;
 
+  // Wait for the previous frame before recording, so a timed-out submission
+  // can never be resubmitted with a fence that is still in use.
+  if (g_fence_pending) {
+    if (vkWaitForFences(g_device, 1, &g_fence, VK_TRUE, 1000000000ull) != VK_SUCCESS) {
+      static bool logged = false;
+      if (!logged) {
+        logged = true;
+        log("vulkan: fence wait timed out; skipping rendering");
+      }
+      return;
+    }
+    vkResetFences(g_device, 1, &g_fence);
+    g_fence_pending = false;
+  }
+
   vkResetCommandBuffer(g_cmd, 0);
   VkCommandBufferBeginInfo begin = {};
   begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -296,11 +312,11 @@ void render(void* queue, void* swapchain, uint32_t image_index) {
   submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submit.commandBufferCount = 1;
   submit.pCommandBuffers = &g_cmd;
-  check_result(vkQueueSubmit(static_cast<VkQueue>(queue), 1, &submit, g_fence));
-  if (vkWaitForFences(g_device, 1, &g_fence, VK_TRUE, 1000000000ull) == VK_SUCCESS)
-    vkResetFences(g_device, 1, &g_fence);
+  const VkResult submitted = vkQueueSubmit(static_cast<VkQueue>(queue), 1, &submit, g_fence);
+  if (submitted == VK_SUCCESS)
+    g_fence_pending = true;
   else
-    log("vulkan: fence wait timed out");
+    check_result(submitted);  // fence stays unsignaled and reusable
 }
 
 void shutdown() {
@@ -318,6 +334,7 @@ void shutdown() {
   if (g_pool) vkDestroyCommandPool(g_device, g_pool, nullptr);
   if (g_pass) vkDestroyRenderPass(g_device, g_pass, nullptr);
   g_fence = VK_NULL_HANDLE;
+  g_fence_pending = false;
   g_cmd = VK_NULL_HANDLE;
   g_pool = VK_NULL_HANDLE;
   g_pass = VK_NULL_HANDLE;

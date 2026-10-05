@@ -4,7 +4,6 @@
 
 #include <d3d11.h>
 
-#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -17,37 +16,15 @@ namespace overlay::render {
 
 namespace {
 
-std::map<std::string, ID3D11ShaderResourceView*> g_cache;
+struct Entry {
+  ID3D11ShaderResourceView* srv = nullptr;
+  unsigned long long retry_at = 0;
+};
 
-bool decode_image(const std::wstring& path, UINT& width, UINT& height, std::vector<unsigned char>& rgba) {
-  IWICImagingFactory* factory = nullptr;
-  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                              IID_PPV_ARGS(&factory))) ||
-      !factory)
-    return false;
+std::map<std::string, Entry> g_cache;
 
-  IWICBitmapDecoder* decoder = nullptr;
-  IWICBitmapFrameDecode* frame = nullptr;
-  IWICFormatConverter* converter = nullptr;
-  bool ok = false;
-
-  if (SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)) &&
-      decoder && SUCCEEDED(decoder->GetFrame(0, &frame)) && frame &&
-      SUCCEEDED(factory->CreateFormatConverter(&converter)) && converter &&
-      SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
-                                      WICBitmapPaletteTypeCustom))) {
-    converter->GetSize(&width, &height);
-    rgba.resize(static_cast<size_t>(width) * height * 4);
-    ok = SUCCEEDED(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(rgba.size()), rgba.data()));
-  }
-
-  if (converter) converter->Release();
-  if (frame) frame->Release();
-  if (decoder) decoder->Release();
-  factory->Release();
-  return ok;
-}
+// Missing or broken paths are retried at most this often, never per frame.
+constexpr unsigned long long kRetryMs = 2000;
 
 std::wstring to_wide(const char* utf8) {
   const int length = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
@@ -64,53 +41,90 @@ std::wstring resolve_path(const char* path) {
   return module_directory() + L"scripts\\" + wide;
 }
 
-}  // namespace
+ID3D11ShaderResourceView* create_texture(ID3D11Device* device, const std::wstring& path) {
+  // WIC needs an apartment; the Target's render thread may never have called
+  // CoInitializeEx itself. RPC_E_CHANGED_MODE means COM is already up (MTA).
+  const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool owned_com = SUCCEEDED(com);
 
-void* texture_for(const char* utf8_path) {
-  if (!utf8_path || !*utf8_path) return nullptr;
-  const auto cached = g_cache.find(utf8_path);
-  if (cached != g_cache.end()) return cached->second;
-
-  ID3D11Device* device = dx11::device();
-  if (!device) return nullptr;  // non-DX11 backends: images are deferred
+  IWICImagingFactory* factory = nullptr;
+  IWICBitmapDecoder* decoder = nullptr;
+  IWICBitmapFrameDecode* frame = nullptr;
+  IWICFormatConverter* converter = nullptr;
+  ID3D11Texture2D* texture = nullptr;
+  ID3D11ShaderResourceView* srv = nullptr;
 
   UINT width = 0;
   UINT height = 0;
   std::vector<unsigned char> rgba;
-  if (!decode_image(resolve_path(utf8_path), width, height, rgba) || width == 0 || height == 0) return nullptr;
+  if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+      factory && SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                                                              WICDecodeMetadataCacheOnDemand, &decoder)) &&
+      decoder && SUCCEEDED(decoder->GetFrame(0, &frame)) && frame &&
+      SUCCEEDED(factory->CreateFormatConverter(&converter)) && converter &&
+      SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                      WICBitmapPaletteTypeCustom))) {
+    converter->GetSize(&width, &height);
+    rgba.resize(static_cast<size_t>(width) * height * 4);
+    if (SUCCEEDED(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(rgba.size()), rgba.data())) && width &&
+        height) {
+      D3D11_TEXTURE2D_DESC desc = {};
+      desc.Width = width;
+      desc.Height = height;
+      desc.MipLevels = 1;
+      desc.ArraySize = 1;
+      desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      desc.SampleDesc.Count = 1;
+      desc.Usage = D3D11_USAGE_DEFAULT;
+      desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+      D3D11_SUBRESOURCE_DATA data = {};
+      data.pSysMem = rgba.data();
+      data.SysMemPitch = width * 4;
+      if (SUCCEEDED(device->CreateTexture2D(&desc, &data, &texture)) && texture) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
+        view.Format = desc.Format;
+        view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        view.Texture2D.MipLevels = 1;
+        if (FAILED(device->CreateShaderResourceView(texture, &view, &srv))) srv = nullptr;
+      }
+    }
+  }
 
-  D3D11_TEXTURE2D_DESC desc = {};
-  desc.Width = width;
-  desc.Height = height;
-  desc.MipLevels = 1;
-  desc.ArraySize = 1;
-  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-  desc.SampleDesc.Count = 1;
-  desc.Usage = D3D11_USAGE_DEFAULT;
-  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  D3D11_SUBRESOURCE_DATA data = {};
-  data.pSysMem = rgba.data();
-  data.SysMemPitch = width * 4;
+  if (texture) texture->Release();
+  if (converter) converter->Release();
+  if (frame) frame->Release();
+  if (decoder) decoder->Release();
+  if (factory) factory->Release();
+  if (owned_com) CoUninitialize();
+  return srv;
+}
 
-  ID3D11Texture2D* texture = nullptr;
-  if (FAILED(device->CreateTexture2D(&desc, &data, &texture)) || !texture) return nullptr;
+}  // namespace
 
-  D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
-  view.Format = desc.Format;
-  view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-  view.Texture2D.MipLevels = 1;
-  ID3D11ShaderResourceView* srv = nullptr;
-  const HRESULT hr = device->CreateShaderResourceView(texture, &view, &srv);
-  texture->Release();
-  if (FAILED(hr) || !srv) return nullptr;
+void* texture_for(const char* utf8_path) {
+  if (!utf8_path || !*utf8_path) return nullptr;
+  const unsigned long long now = GetTickCount64();
+  const auto cached = g_cache.find(utf8_path);
+  if (cached != g_cache.end()) {
+    if (cached->second.srv) return cached->second.srv;
+    if (now < cached->second.retry_at) return nullptr;
+  }
 
-  g_cache[utf8_path] = srv;
+  ID3D11Device* device = dx11::device();
+  if (!device) return nullptr;  // non-DX11 backends: images are deferred
+
+  ID3D11ShaderResourceView* srv = create_texture(device, resolve_path(utf8_path));
+  if (!srv) {
+    g_cache[utf8_path] = Entry{nullptr, now + kRetryMs};
+    return nullptr;
+  }
+  g_cache[utf8_path] = Entry{srv, 0};
   return srv;
 }
 
 void release_textures() {
   for (auto& entry : g_cache)
-    if (entry.second) entry.second->Release();
+    if (entry.second.srv) entry.second.srv->Release();
   g_cache.clear();
 }
 

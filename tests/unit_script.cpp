@@ -200,6 +200,12 @@ int main() {
   check(image_mock.images == 1, "image drawn through provider");
   script::set_texture_provider(nullptr);
 
+  check(script::execute(R"(
+    local ok, value = pcall(fs.read, "NUL")
+    if ok then error("reserved device name accepted: " .. tostring(value)) end
+  )",
+                        "fs"), "reserved device names rejected by the sandbox");
+
   if (g_failures == 0) {
     std::printf("unit_script: all checks passed\n");
     return 0;

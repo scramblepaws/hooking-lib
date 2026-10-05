@@ -614,6 +614,17 @@ bool safe_name(const char* name) {
     if (c[0] == '.' && c[1] == '.') return false;
     if (length > 64) return false;
   }
+  // Windows resolves reserved device names before the first dot ("NUL", "CON.txt"),
+  // which would open a device instead of a file (fs.read("CON") blocks forever).
+  char base[8] = {};
+  size_t base_length = 0;
+  for (const char* c = name; *c && *c != '.' && base_length < sizeof(base) - 1; ++c)
+    base[base_length++] = static_cast<char>((*c >= 'a' && *c <= 'z') ? *c - ('a' - 'A') : *c);
+  static const char* kReserved[] = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5",
+                                    "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+                                    "LPT6", "LPT7", "LPT8", "LPT9"};
+  for (const char* reserved : kReserved)
+    if (std::strcmp(base, reserved) == 0) return false;
   return true;
 }
 
