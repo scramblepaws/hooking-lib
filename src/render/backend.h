@@ -14,6 +14,9 @@ bool ready();
 void frame(IDXGISwapChain* swapchain);
 void frame_vulkan(void* queue, void* swapchain, uint32_t image_index);
 void shutdown();
+// Fault path: stop rendering without touching renderer state (it may be
+// inconsistent after a contained crash). Resources leak until process exit.
+void abandon();
 void release_target();
 bool create_target(IDXGISwapChain* swapchain);
 

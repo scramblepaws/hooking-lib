@@ -199,6 +199,14 @@ void shutdown() {
   log("render shutdown");
 }
 
+void abandon() {
+  if (!g_ready) return;
+  g_ready = false;
+  g_api = Api::Unknown;
+  g_swapchain = nullptr;
+  log("render abandoned after fault (resources leak until process exit)");
+}
+
 void release_target() {
   switch (g_api) {
     case Api::Dx11: dx11::release_target(); break;

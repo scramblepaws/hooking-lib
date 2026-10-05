@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "core/log.h"
+#include "core/salvage.h"
 #include "core/state.h"
 #include "script/script.h"
 #include "ui/menu.h"
@@ -74,6 +75,37 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   }
   if (ImGui::GetCurrentContext()) ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
   return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+struct FrameContext {
+  ID3D11DeviceContext* ctx;
+  ID3D11RenderTargetView* rtv;
+  IDXGISwapChain* swapchain;
+};
+
+void frame_body(void* user) {
+  FrameContext* frame = static_cast<FrameContext*>(user);
+  ImGui_ImplDX11_NewFrame();
+  ImGui_ImplWin32_NewFrame();
+  ImGui::NewFrame();
+  ui::set_scale(ui_scale(g_hwnd));
+  const bool menu_open = state().menu_open.load();
+  if (menu_open) {
+    ui::draw();
+  } else {
+    state().captured_key.store(0);
+    state().char_count.store(0);
+  }
+  ui::draw_overlays();
+  script::tick(ImGui::GetTime());
+  ImGui::GetIO().MouseDrawCursor = menu_open;
+  ImGui::Render();
+
+  const float key_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  frame->ctx->OMSetRenderTargets(1, &frame->rtv, nullptr);
+  frame->ctx->ClearRenderTargetView(frame->rtv, key_color);
+  ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+  frame->swapchain->Present(1, 0);
 }
 
 void thread_main(HWND target, HANDLE ready_event, bool* ready_flag) {
@@ -158,6 +190,7 @@ void thread_main(HWND target, HANDLE ready_event, bool* ready_flag) {
   SetEvent(ready_event);
 
   MSG msg = {};
+  bool faulted = false;
   while (g_running.load()) {
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
       if (msg.message == WM_QUIT) g_running.store(false);
@@ -175,33 +208,20 @@ void thread_main(HWND target, HANDLE ready_event, bool* ready_flag) {
 
     set_interactive(state().menu_open.load());
 
-    ImGui_ImplDX11_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
-    ui::set_scale(ui_scale(g_hwnd));
-    const bool menu_open = state().menu_open.load();
-    if (menu_open) {
-      ui::draw();
-    } else {
-      state().captured_key.store(0);
-      state().char_count.store(0);
+    FrameContext frame{ctx, rtv, swapchain};
+    if (!salvage::run(frame_body, &frame)) {
+      log("external: frame faulted, rendering disabled");
+      faulted = true;
+      break;
     }
-    ui::draw_overlays();
-    script::tick(ImGui::GetTime());
-    ImGui::GetIO().MouseDrawCursor = menu_open;
-    ImGui::Render();
-
-    const float key_color[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    ctx->OMSetRenderTargets(1, &rtv, nullptr);
-    ctx->ClearRenderTargetView(rtv, key_color);
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    swapchain->Present(1, 0);
   }
 
-  ui::save_active_config();
-  ImGui_ImplDX11_Shutdown();
-  ImGui_ImplWin32_Shutdown();
-  if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+  if (!faulted) {
+    ui::save_active_config();
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+  }
   rtv->Release();
   swapchain->Release();
   ctx->Release();
@@ -217,6 +237,7 @@ bool running() { return g_running.load(); }
 
 bool start(void* target_hwnd) {
   if (g_running.exchange(true)) return true;
+  salvage::install();
   HANDLE ready_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   bool ready = false;
   g_toggle_down = false;

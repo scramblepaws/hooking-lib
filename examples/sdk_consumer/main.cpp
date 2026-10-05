@@ -64,13 +64,18 @@ void chrome_painter(void* user, OverlayCanvas* canvas, OverlayMenu* menu_handle)
   }
 }
 
+void crash_chrome_painter(void*, OverlayCanvas*, OverlayMenu*) {
+  *static_cast<volatile int*>(nullptr) = 1;
+}
+
 void build_menu() {
+  const bool crash = wcsstr(GetCommandLineW(), L"--crash-painter") != nullptr;
   OverlayInitInfo info;
   info.size = static_cast<uint32_t>(sizeof(info));
   info.backend = OVERLAY_BACKEND_DX11;
   info.flags = 0;
   info.target_hwnd = nullptr;
-  info.menu_title = "sdk_consumer";
+  info.menu_title = "SDK Consumer";
   if (overlay_init(&info) != OVERLAY_OK) {
     MessageBoxW(nullptr, L"overlay_init failed", L"sdk_consumer", MB_OK | MB_ICONERROR);
     return;
@@ -91,7 +96,7 @@ void build_menu() {
   OverlayWidget* color = overlay_widget_create(extras, OVERLAY_WIDGET_COLOR_PICKER, "accent", "Accent");
   overlay_widget_set_color(color, (OverlayColor){0.70f, 0.21f, 0.21f, 1.0f});
 
-  overlay_menu_set_chrome_painter(chrome_painter, nullptr);
+  overlay_menu_set_chrome_painter(crash ? crash_chrome_painter : chrome_painter, nullptr);
   overlay_set_menu_open(1);
 }
 

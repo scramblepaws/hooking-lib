@@ -9,7 +9,7 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - Injected DX11 overlay: MinHook trampolines on `Present`/`ResizeBuffers`, clean eject, WndProc reclaim
 - DX12 support: the swapchain's device is detected and rendering is submitted on the Target's own present queue (captured by hooking the `CreateDXGIFactory*`/`D3D12CreateDevice` exports and swapping the per-instance `CreateCommandQueue` vtable entry). The DLL must be present before the Target creates its device - use `injector --launch` (or host mode); mid-run injection into an established DX12 device logs and stays dormant rather than crashing
 - Vulkan support: the loader's `vkCreateInstance`/`vkCreateDevice`/`vkCreateWin32SurfaceKHR`/`vkCreateSwapchainKHR`/`vkQueuePresentKHR` entry points are hooked, and `vkGetInstanceProcAddr`/`vkGetDeviceProcAddr` hand out our detours so dispatch tables built at runtime (volk et al) stay on our path. The overlay draws into the presented swapchain image at `vkQueuePresentKHR` time on the Target's own queue. A Target destroying and recreating its device (TDR, GPU switch, engine re-init) is detected at `vkDestroyDevice` and the renderer rebinds to the replacement automatically. Once the Target has cached our pointers, eject turns the hooks off and stops rendering but leaves the module loaded. The DLL must be present before the Target resolves its Vulkan pointers - use `injector --launch`; mid-run injection into an established Vulkan app logs and stays dormant
-- Hardened lifecycle: eject drains in-flight detours/messages before unload (no timing guesses); host-linked builds remove hooks but stay loaded; device-removed/reset triggers re-init; UI faults are contained (C++ exceptions; full SEH on MSVC builds)
+- Hardened lifecycle: eject drains in-flight detours/messages before unload (no timing guesses); host-linked builds remove hooks but stay loaded; device-removed/reset triggers re-init; render and painter faults (access violations included) are contained on any toolchain by a first-chance vectored handler plus a setjmp firewall - rendering is abandoned and the Target keeps running
 - Borderless menu rendered through a backend-agnostic Canvas (no ImGui windows or widgets in the UI layer)
 - Retained widgets: Toggle, Checkbox, Slider, Dropdown, Keybind, TextInput, ColorPicker
 - Replaceable painters: any widget's rendering can be overridden per instance (C++ or C callback)
@@ -76,6 +76,8 @@ powershell -ExecutionPolicy Bypass -File tools/soak/soak.ps1 -Cycles 5
 ```
 
 The soak harness launches the target, injects, exercises open/click/drag/resize/close, ejects, and asserts the target survives and the eject drained cleanly. It moves the real mouse cursor, so run it when you are not using the machine.
+
+Fault containment has its own checks: `unit_salvage` proves null writes and divide-by-zero unwind out of the firewall, and `sdk_consumer.exe --crash-painter` crashes the live chrome painter inside the hooked Present path and asserts the process survives with rendering disabled.
 
 ## SDK packaging
 

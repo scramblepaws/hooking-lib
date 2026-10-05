@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "core/log.h"
+#include "core/salvage.h"
 #include "core/state.h"
 #include "render/backend.h"
 
@@ -185,29 +186,11 @@ LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   return CallWindowProcW(g_wndproc, hwnd, msg, wp, lp);
 }
 
-bool run_firewalled(void (*fn)(void*), void* user) {
-#if defined(_MSC_VER)
-  __try {
-    fn(user);
-    return true;
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    return false;
-  }
-#else
-  // ponytail: GCC has no __try; this covers C++ throws only. SEH faults still
-  // reach the process; an MSVC build gets the full SEH firewall.
-  try {
-    fn(user);
-    return true;
-  } catch (...) {
-    return false;
-  }
-#endif
-}
+bool run_firewalled(void (*fn)(void*), void* user) { return salvage::run(fn, user); }
 
 void fault(const char* where) {
   log("%s faulted - disabling overlay rendering", where);
-  render::shutdown();
+  render::abandon();
   state().render_ready.store(false);
   g_faulted = true;
 }
@@ -225,6 +208,7 @@ void eject_worker(HMODULE self) {
   MH_DisableHook(MH_ALL_HOOKS);
   for (int i = 0; i < 4000 && g_in_flight.load() > 0; ++i) Sleep(1);
   log("eject: drained (in_flight=%d)", g_in_flight.load());
+  salvage::remove();
   if (g_host_mode.load() || g_vk_wrapped.load()) {
     // Vulkan dispatch tables built through our wrapped proc-addr functions
     // still point into this module; unloading would crash the Target.
@@ -783,6 +767,7 @@ bool install() {
     log("MH_Initialize failed");
     return false;
   }
+  salvage::install();
   g_eject_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!create_hooks()) return false;
   create_d3d12_capture_hooks();

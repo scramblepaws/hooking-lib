@@ -41,3 +41,11 @@ target_include_directories(unit_script PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_S
 target_compile_definitions(unit_script PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(unit_script PRIVATE yyjson imgui Luau.VM Luau.Compiler)
 add_test(NAME unit_script COMMAND unit_script)
+
+add_executable(unit_salvage unit_salvage.cpp
+  ${CMAKE_SOURCE_DIR}/src/core/salvage.cpp
+  ${CMAKE_SOURCE_DIR}/src/core/log.cpp
+  ${CMAKE_SOURCE_DIR}/src/core/paths.cpp)
+target_include_directories(unit_salvage PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(unit_salvage PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+add_test(NAME unit_salvage COMMAND unit_salvage)
