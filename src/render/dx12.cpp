@@ -6,6 +6,7 @@
 #include <dxgi1_4.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "core/log.h"
@@ -20,7 +21,11 @@ namespace overlay::render::dx12 {
 namespace {
 
 constexpr int kFramesInFlight = 3;
-constexpr int kSrvHeapCount = 128;
+// The tail of the shader-visible heap is reserved for overlay (Drawing) images;
+// ImGui's runtime texture allocator rotates through the head.
+constexpr int kSrvHeapCount = 256;
+constexpr int kOverlaySrvCount = 128;
+constexpr int kOverlaySrvBase = kSrvHeapCount - kOverlaySrvCount;
 
 struct Frame {
   ID3D12CommandAllocator* allocator = nullptr;
@@ -42,6 +47,8 @@ std::vector<ID3D12Resource*> g_buffers;
 IDXGISwapChain* g_swapchain = nullptr;
 IDXGISwapChain3* g_swapchain3 = nullptr;
 int g_srv_next = 0;
+int g_overlay_srv_next = 0;
+std::vector<ID3D12Resource*> g_overlay_textures;
 
 void srv_alloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
   auto* heap = info->SrvDescriptorHeap;
@@ -50,7 +57,7 @@ void srv_alloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, 
   D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle = heap->GetGPUDescriptorHandleForHeapStart();
   cpu_handle.ptr += static_cast<SIZE_T>(size) * g_srv_next;
   gpu_handle.ptr += static_cast<UINT64>(size) * g_srv_next;
-  g_srv_next = (g_srv_next + 1) % kSrvHeapCount;
+  g_srv_next = (g_srv_next + 1) % kOverlaySrvBase;
   *cpu = cpu_handle;
   *gpu = gpu_handle;
 }
@@ -84,6 +91,8 @@ bool make_targets(IDXGISwapChain* sc) {
 }
 
 }  // namespace
+
+bool ready() { return g_device != nullptr; }
 
 bool create_target(IDXGISwapChain* sc) {
   g_swapchain = sc;
@@ -210,10 +219,138 @@ void render() {
   g_frame_index = (g_frame_index + 1) % kFramesInFlight;
 }
 
+void* create_texture(const void* rgba, uint32_t width, uint32_t height) {
+  if (!g_device || !g_queue || !g_srv_heap || !g_fence || !rgba || width == 0 || height == 0) return nullptr;
+  if (g_overlay_srv_next >= kOverlaySrvCount) {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      log("dx12: overlay texture descriptors exhausted (%d)", kOverlaySrvCount);
+    }
+    return nullptr;
+  }
+
+  const UINT64 row_pitch = (static_cast<UINT64>(width) * 4 + 255) & ~static_cast<UINT64>(255);
+  const UINT64 upload_size = row_pitch * height;
+
+  D3D12_HEAP_PROPERTIES default_heap = {};
+  default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+  D3D12_RESOURCE_DESC texture_desc = {};
+  texture_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  texture_desc.Width = width;
+  texture_desc.Height = height;
+  texture_desc.DepthOrArraySize = 1;
+  texture_desc.MipLevels = 1;
+  texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  texture_desc.SampleDesc.Count = 1;
+  ID3D12Resource* texture = nullptr;
+  if (FAILED(g_device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &texture_desc,
+                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                               __uuidof(ID3D12Resource), reinterpret_cast<void**>(&texture))))
+    return nullptr;
+
+  D3D12_HEAP_PROPERTIES upload_heap = {};
+  upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+  D3D12_RESOURCE_DESC buffer_desc = {};
+  buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  buffer_desc.Width = upload_size;
+  buffer_desc.Height = 1;
+  buffer_desc.DepthOrArraySize = 1;
+  buffer_desc.MipLevels = 1;
+  buffer_desc.Format = DXGI_FORMAT_UNKNOWN;
+  buffer_desc.SampleDesc.Count = 1;
+  buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  ID3D12Resource* upload = nullptr;
+  if (FAILED(g_device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &buffer_desc,
+                                               D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                               __uuidof(ID3D12Resource), reinterpret_cast<void**>(&upload)))) {
+    texture->Release();
+    return nullptr;
+  }
+
+  void* mapped = nullptr;
+  if (FAILED(upload->Map(0, nullptr, &mapped)) || !mapped) {
+    upload->Release();
+    texture->Release();
+    return nullptr;
+  }
+  for (uint32_t y = 0; y < height; ++y)
+    std::memcpy(static_cast<unsigned char*>(mapped) + y * row_pitch,
+                static_cast<const unsigned char*>(rgba) + static_cast<size_t>(y) * width * 4, width * 4);
+  upload->Unmap(0, nullptr);
+
+  ID3D12CommandAllocator* allocator = nullptr;
+  ID3D12GraphicsCommandList* list = nullptr;
+  bool recorded = false;
+  if (SUCCEEDED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator),
+                                                 reinterpret_cast<void**>(&allocator))) &&
+      allocator &&
+      SUCCEEDED(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
+                                            __uuidof(ID3D12GraphicsCommandList), reinterpret_cast<void**>(&list))) &&
+      list) {
+    D3D12_TEXTURE_COPY_LOCATION dst = {};
+    dst.pResource = texture;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    D3D12_TEXTURE_COPY_LOCATION src = {};
+    src.pResource = upload;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    src.PlacedFootprint.Footprint.Width = width;
+    src.PlacedFootprint.Footprint.Height = height;
+    src.PlacedFootprint.Footprint.Depth = 1;
+    src.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(row_pitch);
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = texture;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    list->ResourceBarrier(1, &barrier);
+    recorded = SUCCEEDED(list->Close());
+  }
+  if (recorded) {
+    ID3D12CommandList* lists[] = {list};
+    g_queue->ExecuteCommandLists(1, lists);
+    ++g_fence_value;
+    g_queue->Signal(g_fence, g_fence_value);
+    if (g_fence->GetCompletedValue() < g_fence_value) {
+      g_fence->SetEventOnCompletion(g_fence_value, g_fence_event);
+      WaitForSingleObject(g_fence_event, INFINITE);
+    }
+  }
+  if (list) list->Release();
+  if (allocator) allocator->Release();
+  upload->Release();
+  if (!recorded) {
+    texture->Release();
+    return nullptr;
+  }
+
+  const UINT descriptor_size = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  const UINT slot = kOverlaySrvBase + static_cast<UINT>(g_overlay_srv_next++);
+  D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srv_heap->GetCPUDescriptorHandleForHeapStart();
+  cpu.ptr += static_cast<SIZE_T>(descriptor_size) * slot;
+  D3D12_SHADER_RESOURCE_VIEW_DESC view = {};
+  view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+  view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  view.Texture2D.MipLevels = 1;
+  g_device->CreateShaderResourceView(texture, &view, cpu);
+  D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srv_heap->GetGPUDescriptorHandleForHeapStart();
+  gpu.ptr += static_cast<UINT64>(descriptor_size) * slot;
+  g_overlay_textures.push_back(texture);
+  return reinterpret_cast<void*>(static_cast<uintptr_t>(gpu.ptr));
+}
+
 void shutdown() {
   if (!g_device) return;
   ImGui_ImplDX12_Shutdown();
   release_target();
+  for (ID3D12Resource* texture : g_overlay_textures)
+    if (texture) texture->Release();
+  g_overlay_textures.clear();
+  g_overlay_srv_next = 0;
   for (Frame& frame : g_frames) {
     if (frame.allocator) {
       frame.allocator->Release();

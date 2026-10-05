@@ -19,7 +19,7 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - Notifications: top-corner toasts (position/duration configurable) plus a bottom event feed, drawn whether or not the menu is open
 - Stylesheet layer: CSS subset (`menu {}`, `class {}`, `#id {}`) for colors and rounding; the shipped look is `assets/theme.css`
 - Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. `scripts/starter.lua` builds the shipped menu; the C++ starter remains the fallback when the folder is empty
-- Drawing API: script ESP primitives via `Drawing.new` (Line/Text/Circle/Square/Triangle/Image) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game. Images decode with Windows WIC from files relative to the scripts folder; on non-DX11 backends images are skipped for now
+- Drawing API: script ESP primitives via `Drawing.new` (Line/Text/Circle/Square/Triangle/Image) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game. Images decode with Windows WIC from files relative to the scripts folder and upload to whichever backend is active (DX11/DX12/Vulkan), bounded per session by the backend's overlay texture slots
 - External mode: `overlay_init` with `OVERLAY_FLAG_EXTERNAL` gives the library its own topmost, click-through, color-keyed window over a target (or the primary monitor), running the same UI and script stack on its own thread. No injection, no hooks
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
@@ -27,7 +27,8 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 
 ## Not built yet
 
-- Drawing images on DX12 and Vulkan (DX11 decodes and renders them)
+- C# binding over the C ABI
+- Vulkan device replacement mid-session (TDR/GPU switch) needs reinjection
 
 ## Requirements
 

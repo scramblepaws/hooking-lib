@@ -2,6 +2,7 @@
 
 #include <volk.h>
 
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -34,6 +35,12 @@ std::vector<VkImage> g_images;
 std::vector<VkImageView> g_views;
 std::vector<VkFramebuffer> g_fbs;
 
+constexpr uint32_t kMaxOverlayTextures = 48;  // leaves headroom in the 64-slot pool
+std::vector<VkImage> g_texture_images;
+std::vector<VkImageView> g_texture_views;
+std::vector<VkDeviceMemory> g_texture_memory;
+uint32_t g_texture_count = 0;
+
 bool g_ready = false;
 bool g_imgui_ready = false;
 
@@ -43,6 +50,14 @@ std::mutex g_lock;
 
 void check_result(VkResult result) {
   if (result != VK_SUCCESS) log("vulkan: error %d", static_cast<int>(result));
+}
+
+uint32_t find_memory_type(uint32_t type_bits, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memory = {};
+  vkGetPhysicalDeviceMemoryProperties(g_physical, &memory);
+  for (uint32_t i = 0; i < memory.memoryTypeCount; ++i)
+    if ((type_bits & (1u << i)) && (memory.memoryTypes[i].propertyFlags & properties) == properties) return i;
+  return UINT32_MAX;
 }
 
 bool create_render_pass(VkFormat format) {
@@ -86,7 +101,7 @@ bool init_imgui_backend(uint32_t image_count) {
   info.Device = g_device;
   info.QueueFamily = g_family;
   info.Queue = g_queue;
-  info.DescriptorPoolSize = 8;
+  info.DescriptorPoolSize = 64;  // room for the font atlas plus overlay images
   info.MinImageCount = image_count < 2 ? 2 : image_count;
   info.ImageCount = info.MinImageCount;
   info.PipelineInfoMain.RenderPass = g_pass;
@@ -319,11 +334,167 @@ void render(void* queue, void* swapchain, uint32_t image_index) {
     check_result(submitted);  // fence stays unsignaled and reusable
 }
 
+void release_texture_resources() {
+  for (VkImageView view : g_texture_views)
+    if (view) vkDestroyImageView(g_device, view, nullptr);
+  for (VkImage image : g_texture_images)
+    if (image) vkDestroyImage(g_device, image, nullptr);
+  for (VkDeviceMemory memory : g_texture_memory)
+    if (memory) vkFreeMemory(g_device, memory, nullptr);
+  g_texture_views.clear();
+  g_texture_images.clear();
+  g_texture_memory.clear();
+  g_texture_count = 0;
+}
+
+void* create_texture(const void* rgba, uint32_t width, uint32_t height) {
+  std::lock_guard<std::mutex> lock(g_lock);
+  if (!g_ready || !g_imgui_ready || !rgba || width == 0 || height == 0) return nullptr;
+  if (g_texture_count >= kMaxOverlayTextures) {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      log("vulkan: overlay texture limit reached (%u)", kMaxOverlayTextures);
+    }
+    return nullptr;
+  }
+
+  VkImage image = VK_NULL_HANDLE;
+  VkDeviceMemory image_memory = VK_NULL_HANDLE;
+  VkImageView view = VK_NULL_HANDLE;
+  VkBuffer staging = VK_NULL_HANDLE;
+  VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+  VkCommandBuffer cmd = VK_NULL_HANDLE;
+  const VkDeviceSize bytes = static_cast<VkDeviceSize>(width) * height * 4;
+
+  auto fail = [&]() -> void* {
+    if (cmd) vkFreeCommandBuffers(g_device, g_pool, 1, &cmd);
+    if (staging) vkDestroyBuffer(g_device, staging, nullptr);
+    if (staging_memory) vkFreeMemory(g_device, staging_memory, nullptr);
+    if (view) vkDestroyImageView(g_device, view, nullptr);
+    if (image) vkDestroyImage(g_device, image, nullptr);
+    if (image_memory) vkFreeMemory(g_device, image_memory, nullptr);
+    return nullptr;
+  };
+
+  VkImageCreateInfo image_info = {};
+  image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_info.imageType = VK_IMAGE_TYPE_2D;
+  image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+  image_info.extent = {width, height, 1};
+  image_info.mipLevels = 1;
+  image_info.arrayLayers = 1;
+  image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (vkCreateImage(g_device, &image_info, nullptr, &image) != VK_SUCCESS) return fail();
+
+  VkMemoryRequirements requirements = {};
+  vkGetImageMemoryRequirements(g_device, image, &requirements);
+  VkMemoryAllocateInfo image_alloc = {};
+  image_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  image_alloc.allocationSize = requirements.size;
+  image_alloc.memoryTypeIndex = find_memory_type(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if (image_alloc.memoryTypeIndex == UINT32_MAX ||
+      vkAllocateMemory(g_device, &image_alloc, nullptr, &image_memory) != VK_SUCCESS ||
+      vkBindImageMemory(g_device, image, image_memory, 0) != VK_SUCCESS)
+    return fail();
+
+  VkBufferCreateInfo buffer_info = {};
+  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  buffer_info.size = bytes;
+  buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(g_device, &buffer_info, nullptr, &staging) != VK_SUCCESS) return fail();
+  vkGetBufferMemoryRequirements(g_device, staging, &requirements);
+  VkMemoryAllocateInfo staging_alloc = {};
+  staging_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  staging_alloc.allocationSize = requirements.size;
+  staging_alloc.memoryTypeIndex = find_memory_type(
+      requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (staging_alloc.memoryTypeIndex == UINT32_MAX ||
+      vkAllocateMemory(g_device, &staging_alloc, nullptr, &staging_memory) != VK_SUCCESS ||
+      vkBindBufferMemory(g_device, staging, staging_memory, 0) != VK_SUCCESS)
+    return fail();
+  void* mapped = nullptr;
+  if (vkMapMemory(g_device, staging_memory, 0, bytes, 0, &mapped) != VK_SUCCESS) return fail();
+  std::memcpy(mapped, rgba, static_cast<size_t>(bytes));
+  vkUnmapMemory(g_device, staging_memory);
+
+  VkCommandBufferAllocateInfo cmd_alloc = {};
+  cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  cmd_alloc.commandPool = g_pool;
+  cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  cmd_alloc.commandBufferCount = 1;
+  if (vkAllocateCommandBuffers(g_device, &cmd_alloc, &cmd) != VK_SUCCESS) return fail();
+
+  VkCommandBufferBeginInfo begin = {};
+  begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &begin);
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &barrier);
+  VkBufferImageCopy region = {};
+  region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  region.imageExtent = {width, height, 1};
+  vkCmdCopyBufferToImage(cmd, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &barrier);
+  if (vkEndCommandBuffer(cmd) != VK_SUCCESS) return fail();
+
+  VkSubmitInfo submit = {};
+  submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submit.commandBufferCount = 1;
+  submit.pCommandBuffers = &cmd;
+  if (vkQueueSubmit(g_queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) return fail();
+  vkQueueWaitIdle(g_queue);
+  vkFreeCommandBuffers(g_device, g_pool, 1, &cmd);
+  cmd = VK_NULL_HANDLE;
+  vkDestroyBuffer(g_device, staging, nullptr);
+  vkFreeMemory(g_device, staging_memory, nullptr);
+  staging = VK_NULL_HANDLE;
+  staging_memory = VK_NULL_HANDLE;
+
+  VkImageViewCreateInfo view_info = {};
+  view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_info.image = image;
+  view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+  view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  if (vkCreateImageView(g_device, &view_info, nullptr, &view) != VK_SUCCESS) return fail();
+
+  const VkDescriptorSet set =
+      ImGui_ImplVulkan_AddTexture(view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  if (set == VK_NULL_HANDLE) return fail();
+
+  g_texture_images.push_back(image);
+  g_texture_views.push_back(view);
+  g_texture_memory.push_back(image_memory);
+  ++g_texture_count;
+  return reinterpret_cast<void*>(set);
+}
+
 void shutdown() {
   std::lock_guard<std::mutex> lock(g_lock);
   if (!g_device) return;
   g_ready = false;
   vkDeviceWaitIdle(g_device);
+  release_texture_resources();
   if (g_imgui_ready) {
     ImGui_ImplVulkan_Shutdown();
     g_imgui_ready = false;
