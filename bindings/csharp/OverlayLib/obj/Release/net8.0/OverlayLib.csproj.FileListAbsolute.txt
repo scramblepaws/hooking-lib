@@ -1,0 +1,12 @@
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\bin\Release\net8.0\OverlayLib.deps.json
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\bin\Release\net8.0\OverlayLib.dll
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\bin\Release\net8.0\OverlayLib.pdb
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.AssemblyInfoInputs.cache
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.AssemblyInfo.cs
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.csproj.CoreCompileInputs.cache
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.sourcelink.json
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.dll
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\refint\OverlayLib.dll
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\OverlayLib.pdb
+C:\Users\Molly\Desktop\CLM\bindings\csharp\OverlayLib\obj\Release\net8.0\ref\OverlayLib.dll

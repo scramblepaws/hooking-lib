@@ -1,0 +1,15 @@
+{
+    "version": 1,
+    "values": {
+        "cs_color": [
+            0.25,
+            0.5,
+            0.75,
+            1.0
+        ],
+        "cs_dropdown": 2,
+        "cs_slider": 41.5,
+        "cs_text": "hello",
+        "cs_toggle": true
+    }
+}

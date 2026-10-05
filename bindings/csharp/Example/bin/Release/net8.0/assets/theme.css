@@ -1,0 +1,26 @@
+/* Overlay theme - CSS subset.
+   Selectors: menu (globals), widget class (toggle, slider, ...), #id (one widget).
+   Properties: accent, track, knob, text, text-dim, panel, border, window-bg,
+   row-hover, nav-selected, button, button-hover, field, rounding. */
+
+menu {
+  accent: #b23636;
+  track: #26262a;
+  knob: #e8e8e8;
+  text: #e8e8e8;
+  text-dim: #8c8c92;
+  panel: #17171a;
+  border: #2a2a2e;
+  window-bg: #131314;
+  row-hover: #1e1e22;
+  nav-selected: #202025;
+  button: #1a1a1d;
+  button-hover: #212126;
+  field: #131314;
+  rounding: 3;
+}
+
+/* Examples:
+toggle { accent: #9edb4a; }
+#enabled { accent: #b23636; }
+*/

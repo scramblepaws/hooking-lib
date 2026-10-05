@@ -20,6 +20,7 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 - Stylesheet layer: CSS subset (`menu {}`, `class {}`, `#id {}`) for colors and rounding; the shipped look is `assets/theme.css`
 - Luau Script Host: sandboxed VM, `ui.*` menu/widget bindings, Lua painters over a Canvas, `task.wait/spawn/defer/delay`, `fs` scoped to the configs folder, mtime hot-reload. `scripts/starter.lua` builds the shipped menu; the C++ starter remains the fallback when the folder is empty
 - Drawing API: script ESP primitives via `Drawing.new` (Line/Text/Circle/Square/Triangle/Image) with `Vector2`/`Color3`, ZIndex ordering and transparency, always drawn above the game. Images decode with Windows WIC from files relative to the scripts folder and upload to whichever backend is active (DX11/DX12/Vulkan), bounded per session by the backend's overlay texture slots
+- C# binding (`bindings/csharp/OverlayLib`): P/Invoke over the C ABI with handle wrappers, delegates for painters and a runnable smoke example
 - External mode: `overlay_init` with `OVERLAY_FLAG_EXTERNAL` gives the library its own topmost, click-through, color-keyed window over a target (or the primary monitor), running the same UI and script stack on its own thread. No injection, no hooks
 - DPI fit-scaling (physical scale clamped so the layout never overlaps)
 - Hotkeys: `Del` toggles the menu, `End` ejects
@@ -27,7 +28,6 @@ Status: pre-v1. The full stack (native UI, scripts, configs, notifications, Draw
 
 ## Not built yet
 
-- C# binding over the C ABI
 - Vulkan device replacement mid-session (TDR/GPU switch) needs reinjection
 
 ## Requirements
@@ -102,6 +102,27 @@ cmake -S app -B app/build -G Ninja -DCMAKE_PREFIX_PATH=C:/path/to/overlay-sdk-0.
 
 The version lives in `include/overlay/overlay_c.h` and flows into the CMake package, so artifacts and `overlay_version_string()` cannot drift. CI (`.github/workflows/ci.yml`) builds and unit-tests on GitHub with MinGW and MSVC; the smoke/soak harness needs a desktop GPU session and stays a local/manual check.
 
+## C# host
+
+`bindings/csharp/OverlayLib` wraps the C ABI for .NET 8+; `bindings/csharp/Example` is a runnable smoke test (creates widgets, round-trips a config, parses a stylesheet, checks the ABI version).
+
+```sh
+dotnet run --project bindings/csharp/Example -c Release
+```
+
+The example copies `build/bin/overlay.dll` and `assets/` next to its binary, so run a CMake build first. A host looks like:
+
+```csharp
+using OverlayLib;
+
+Overlay.Init(Backend.Auto, Overlay.FlagExternal, menuTitle: "My host");
+var page = Overlay.Context.CreatePage("Main", "Host");
+var section = page.CreateSection("Settings");
+var esp = section.CreateWidget(WidgetKind.Toggle, "esp", "ESP");
+esp.SetBool(true);
+Overlay.Notify("host attached");
+```
+
 ## Layout
 
 ```
@@ -113,6 +134,7 @@ src/script/          Luau host: sandbox, scheduler, ui/fs bindings, hot reload
 src/ui/              Canvas, widgets, painters, theme, notifications, menu
 scripts/             *.lua loaded at startup and on change (the starter menu lives here)
 examples/test_app/   DX11/DX12/Vulkan target for smoke tests
+bindings/csharp/     .NET wrapper over the C ABI + smoke example
 tools/injector/      injector CLI
 assets/fonts/        Roboto-Medium.ttf, fa-solid-900.ttf
 assets/theme.css     shipped stylesheet
