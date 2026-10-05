@@ -9,10 +9,10 @@ menu {
   knob: #e8e8ec;
   text: #e8e8ec;
   text-dim: #8b8b95;
-  panel: #121216;
+  panel: #121216f0;
   border: #232329;
-  window-bg: #0b0b0d;
-  row-hover: #1a1a20;
+  window-bg: #0b0b0dde;
+  row-hover: #1c1c22cc;
   nav-selected: #1c1c22;
   button: #17171c;
   button-hover: #202027;

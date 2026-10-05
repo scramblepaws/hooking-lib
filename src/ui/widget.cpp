@@ -112,8 +112,13 @@ Rect reset_rect(const Rect& popup, float scale) {
 void paint_row_chrome(const Widget& widget, Canvas& canvas, const Rect&) {
   const float scale = canvas.scale();
   const Rect control = control_rect(widget, scale);
+  if (widget.state.hovered)
+    canvas.fill_rect({widget.rect.x - 6.0f * scale, widget.rect.y - 3.0f * scale, widget.rect.w + 12.0f * scale,
+                      widget.rect.h + 6.0f * scale},
+                     style_color(widget, "row-hover", theme().row_hover), 0.0f);
   if (widget.show_label && !widget.label.empty()) {
-    const Color text = style_color(widget, "text", theme().text);
+    Color text = style_color(widget, "text", theme().text);
+    if (!widget.state.enabled) text = style_color(widget, "text-dim", theme().text_dim);
     const float left = control.x - (widget.show_gear ? kGearGap * scale + kGearSize * scale : 0.0f);
     const float max_width = left - 8.0f * scale - widget.rect.x;
     std::string label = widget.label;

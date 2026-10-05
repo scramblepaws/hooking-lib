@@ -291,6 +291,8 @@ void paint_default_chrome(Canvas& canvas, Input& input) {
   paint_header(canvas, input);
   paint_cards(canvas);
   if (g_cards.empty()) paint_placeholder(canvas);
+  canvas.text_sized({menu().rect.x + px(16.0f), menu().rect.bottom() - px(22.0f)}, g_chrome.dim, px(11.0f),
+                    "[Del] Menu    [End] Eject");
 }
 
 void handle_config_actions() {
