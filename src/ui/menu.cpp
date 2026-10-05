@@ -96,15 +96,22 @@ Page* current_page() {
   return &m.pages[static_cast<size_t>(m.current_page)];
 }
 
-float card_height(size_t rows) {
-  return px(kCardTitleTop + static_cast<float>(rows) * kRowHeight + static_cast<float>(rows - 1) * kRowGap + 14.0f);
+float card_height(const std::deque<Widget>& widgets) {
+  float rows = 0.0f;
+  for (size_t i = 0; i < widgets.size(); ++i) {
+    rows += widgets[i].height > 0.0f ? widgets[i].height : kRowHeight;
+    if (i + 1 < widgets.size()) rows += kRowGap;
+  }
+  return px(kCardTitleTop + rows + 14.0f);
 }
 
 void layout_card(std::deque<Widget>& widgets, const Rect& card) {
-  for (size_t i = 0; i < widgets.size(); ++i) {
-    const float inset = px(kCardPadX + 14.0f * static_cast<float>(widgets[i].indent));
-    widgets[i].rect = {card.x + inset, card.y + px(kCardTitleTop) + static_cast<float>(i) * px(kRowHeight + kRowGap),
-                       card.w - inset - px(kCardPadX), px(kRowHeight)};
+  float y = card.y + px(kCardTitleTop);
+  for (Widget& widget : widgets) {
+    const float inset = px(kCardPadX + 14.0f * static_cast<float>(widget.indent));
+    const float height = widget.height > 0.0f ? px(widget.height) : px(kRowHeight);
+    widget.rect = {card.x + inset, y, card.w - inset - px(kCardPadX), height};
+    y += height + px(kRowGap);
   }
 }
 
@@ -138,7 +145,7 @@ void layout_default() {
     const bool left = i < left_count;
     const float x = left ? content.x : content.x + left_width + px(kColumnGap);
     const float width = left ? left_width : right_width;
-    const float height = card_height(sections[i]->widgets.size());
+    const float height = card_height(sections[i]->widgets);
     const float y = left ? left_y : right_y;
     const Rect card{x, y, width, height};
     layout_card(sections[i]->widgets, card);

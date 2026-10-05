@@ -314,9 +314,14 @@ void paint_colorpicker(const Widget& widget, Canvas& canvas) {
   canvas.stroke_rect(control, border, 1.0f, style_rounding(widget, theme().rounding) * scale);
 }
 
+Rect button_rect(const Widget& widget, float scale) {
+  const Rect control = control_rect(widget, scale);
+  return {control.x, widget.rect.y, control.w, widget.rect.h};
+}
+
 void paint_button(const Widget& widget, Canvas& canvas) {
   const float scale = canvas.scale();
-  const Rect control = control_rect(widget, scale);
+  const Rect control = button_rect(widget, scale);
   const float rounding = style_rounding(widget, theme().rounding) * scale;
   const Color button = style_color(widget, "button", theme().button);
   const Color hover = style_color(widget, "button-hover", theme().button_hover);
@@ -512,7 +517,7 @@ void update_colorpicker(Widget& widget, Input& input) {
 }
 
 void update_button(Widget& widget, Input& input) {
-  const Rect control = control_rect(widget, input.scale);
+  const Rect control = button_rect(widget, input.scale);
   widget.state.hovered = control.contains(input.mouse);
   widget.state.clicked = false;
   if (widget.state.hovered && input.mouse_clicked && !input.click_consumed) {

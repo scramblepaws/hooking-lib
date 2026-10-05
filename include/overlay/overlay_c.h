@@ -169,6 +169,9 @@ OVERLAY_API void overlay_widget_set_rect(OverlayWidget* widget, OverlayRect rect
 /* Shifts the widget's row inward by `indent` steps, for nested options. */
 OVERLAY_API void overlay_widget_set_indent(OverlayWidget* widget, int indent);
 
+/* Gives the widget's row a taller box, e.g. a script list panel (0 = default row). */
+OVERLAY_API void overlay_widget_set_height(OverlayWidget* widget, float height);
+
 /* ---- widget values -------------------------------------------------- */
 
 OVERLAY_API void overlay_widget_set_bool(OverlayWidget* widget, int value);
