@@ -25,6 +25,7 @@ struct Page {
 struct Menu {
   Rect rect;
   int current_page = 0;
+  std::string title = "Overlay";
   std::deque<Page> pages;
   void* chrome_user = nullptr;
   void (*chrome_painter)(void* user, void* canvas, void* menu_handle) = nullptr;

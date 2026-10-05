@@ -61,6 +61,7 @@ const char* overlay_version_string(void) {
 OverlayStatus overlay_init(const OverlayInitInfo* info) {
   if (!info || info->size < sizeof(OverlayInitInfo)) return OVERLAY_ERR_INVALID_ARGUMENT;
   overlay::claim_host_init();
+  if (info->menu_title && *info->menu_title) overlay::ui::menu().title = info->menu_title;
   if (info->flags & OVERLAY_FLAG_EXTERNAL)
     return overlay::external::start(info->target_hwnd) ? OVERLAY_OK : OVERLAY_ERR_BACKEND_UNAVAILABLE;
   if (info->backend != OVERLAY_BACKEND_AUTO && info->backend != OVERLAY_BACKEND_DX11)

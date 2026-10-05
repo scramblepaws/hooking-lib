@@ -264,7 +264,7 @@ OVERLAY_API void overlay_style_clear(void);
 /* Runs one chunk on the host VM (clears script-built menu content first). */
 OVERLAY_API OverlayStatus overlay_script_execute(const char* source, const char* chunk_name);
 
-/* Queues a full teardown + reload of <module dir>/scripts/*.lua. */
+/* Queues a full teardown + reload of the module's scripts folder. */
 OVERLAY_API OverlayStatus overlay_script_reload(void);
 
 #ifdef __cplusplus

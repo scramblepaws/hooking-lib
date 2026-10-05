@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <memory>
@@ -195,9 +196,7 @@ void paint_sidebar(Canvas& canvas, Input& input) {
   Menu& m = menu();
   const float sidebar_width = px(kSidebarWidth);
 
-  canvas.text_sized({m.rect.x + px(14.0f), m.rect.y + px(22.0f)}, g_chrome.text, px(24.0f), "stupidnig");
-  const Vec2 logo = canvas.measure_text_sized("stupidnig", px(24.0f));
-  canvas.text_sized({m.rect.x + px(14.0f) + logo.x + px(7.0f), m.rect.y + px(31.0f)}, g_chrome.dim, px(14.0f), "CS2");
+  canvas.text_sized({m.rect.x + px(14.0f), m.rect.y + px(22.0f)}, g_chrome.text, px(24.0f), m.title.c_str());
 
   float y = m.rect.y + px(68.0f);
   const char* last_section = nullptr;
@@ -233,17 +232,16 @@ void paint_sidebar(Canvas& canvas, Input& input) {
 void paint_profile(Canvas& canvas) {
   const Rect& menu_rect = menu().rect;
   const Vec2 base{menu_rect.x + px(16.0f), menu_rect.y + menu_rect.h - px(80.0f)};
+  const std::string name = config::active_name();
+  const char initial_text[2] = {
+      static_cast<char>(std::toupper(static_cast<unsigned char>(name.empty() ? 'o' : name[0]))), 0};
 
   canvas.fill_circle({base.x + px(19.0f), base.y + px(19.0f)}, px(19.0f), g_chrome.accent);
-  const Vec2 initial = canvas.measure_text_sized("L", px(18.0f));
+  const Vec2 initial = canvas.measure_text_sized(initial_text, px(18.0f));
   canvas.text_sized({base.x + px(19.0f) - initial.x * 0.5f, base.y + px(19.0f) - initial.y * 0.5f}, g_chrome.text,
-                    px(18.0f), "L");
+                    px(18.0f), initial_text);
 
-  canvas.text({base.x + px(48.0f), base.y + px(4.0f)}, g_chrome.text, "legendiffx");
-  const Vec2 name = canvas.measure_text("legendiffx");
-  const Rect badge{base.x + px(48.0f) + name.x + px(8.0f), base.y + px(3.0f), px(44.0f), px(17.0f)};
-  canvas.stroke_rect(badge, g_chrome.border, 1.0f, px(2.0f));
-  canvas.text_sized({badge.x + px(5.0f), badge.y + px(4.0f)}, g_chrome.dim, px(11.0f), "ADMIN");
+  canvas.text({base.x + px(48.0f), base.y + px(4.0f)}, g_chrome.text, name.c_str());
 
   std::time_t now = std::time(nullptr);
   std::tm* local = std::localtime(&now);
