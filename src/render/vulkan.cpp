@@ -2,6 +2,7 @@
 
 #include <volk.h>
 
+#include <mutex>
 #include <vector>
 
 #include "core/log.h"
@@ -34,6 +35,10 @@ std::vector<VkFramebuffer> g_fbs;
 
 bool g_ready = false;
 bool g_imgui_ready = false;
+
+// Swapchain rebuilds (vkCreateSwapchainKHR from the Target's thread) race the
+// present-time render (present thread); everything touches the same resources.
+std::mutex g_lock;
 
 void check_result(VkResult result) {
   if (result != VK_SUCCESS) log("vulkan: error %d", static_cast<int>(result));
@@ -163,7 +168,7 @@ bool init(void* hwnd, const Target& target) {
   g_format = static_cast<VkFormat>(target.format);
   g_ready = true;
 
-  if (!ImGui_ImplWin32_Init(hwnd) || !create_target(target)) {
+  if (!create_target(target)) {
     log("vulkan: target init failed");
     shutdown();
     return false;
@@ -181,6 +186,7 @@ void new_frame() {
 }
 
 bool create_target(const Target& target) {
+  std::lock_guard<std::mutex> lock(g_lock);
   if (!g_ready || target.device != g_device) return false;
   vkDeviceWaitIdle(g_device);
   destroy_swapchain_resources();
@@ -229,17 +235,23 @@ bool create_target(const Target& target) {
     fb.layers = 1;
     if (vkCreateFramebuffer(g_device, &fb, nullptr, &g_fbs[i]) != VK_SUCCESS) return false;
   }
-  if (!g_imgui_ready && !init_imgui_backend(count)) return false;
+  if (!g_imgui_ready) {
+    if (!init_imgui_backend(count)) return false;
+  } else {
+    ImGui_ImplVulkan_SetMinImageCount(count < 2 ? 2 : count);
+  }
   return true;
 }
 
 void release_target(void* swapchain) {
+  std::lock_guard<std::mutex> lock(g_lock);
   if (!g_ready || static_cast<VkSwapchainKHR>(swapchain) != g_swapchain) return;
   vkDeviceWaitIdle(g_device);
   destroy_swapchain_resources();
 }
 
 void render(void* queue, void* swapchain, uint32_t image_index) {
+  std::lock_guard<std::mutex> lock(g_lock);
   if (!g_ready || !g_imgui_ready) return;
   if (static_cast<VkSwapchainKHR>(swapchain) != g_swapchain || image_index >= g_fbs.size() || !g_fbs[image_index])
     return;
@@ -292,6 +304,7 @@ void render(void* queue, void* swapchain, uint32_t image_index) {
 }
 
 void shutdown() {
+  std::lock_guard<std::mutex> lock(g_lock);
   if (!g_device) return;
   g_ready = false;
   vkDeviceWaitIdle(g_device);

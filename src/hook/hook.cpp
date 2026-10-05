@@ -75,6 +75,7 @@ uint32_t g_vk_family = 0;
 HWND g_vk_hwnd = nullptr;
 render::vulkan::Target g_vk_target = {};
 bool g_vk_target_logged = false;
+bool g_vk_no_surface_logged = false;
 WNDPROC g_wndproc = nullptr;
 HWND g_hwnd = nullptr;
 HANDLE g_eject_event = nullptr;
@@ -457,7 +458,7 @@ VkResult VKAPI_PTR hk_vk_create_device(VkPhysicalDevice physical, const VkDevice
       const VkDeviceQueueCreateInfo& create = info->pQueueCreateInfos[i];
       if (create.queueCount == 0) continue;
       g_vk_family = create.queueFamilyIndex;
-      g_vk_get_device_queue(*out, g_vk_family, 0, &queue);
+      if (g_vk_get_device_queue) g_vk_get_device_queue(*out, g_vk_family, 0, &queue);
       if (queue) break;
     }
   }
@@ -523,8 +524,7 @@ VkResult VKAPI_PTR hk_vk_queue_present(VkQueue queue, const VkPresentInfoKHR* in
   if (!g_vk_target.queue) g_vk_target.queue = queue;  // the present queue is authoritative
 
   if (!render::ready() && !g_faulted && g_vk_device && g_vk_hwnd) {
-    if (g_init_attempts++ % 60 == 0) {
-      struct InitArgs {
+    if (g_init_attempts++ % 60 == 0) {      struct InitArgs {
         void* hwnd;
         render::vulkan::Target target;
         bool ok;
@@ -549,6 +549,9 @@ VkResult VKAPI_PTR hk_vk_queue_present(VkQueue queue, const VkPresentInfoKHR* in
         log("vulkan init failed, will retry");
       }
     }
+  } else if (!render::ready() && !g_faulted && g_vk_device && !g_vk_hwnd && !g_vk_no_surface_logged) {
+    g_vk_no_surface_logged = true;
+    log("vulkan: no surface window captured; rendering stays dormant");
   }
 
   if (render::ready() && render::vulkan::active()) {
@@ -589,23 +592,23 @@ PFN_vkVoidFunction VKAPI_PTR hk_vk_get_device_proc_addr(VkDevice device, const c
 PFN_vkVoidFunction wrap_vk_proc(const char* name, PFN_vkVoidFunction real) {
   if (!name || !real || g_shutting_down.load()) return real;
   PFN_vkVoidFunction wrapped = nullptr;
-  if (std::strcmp(name, "vkQueuePresentKHR") == 0)
+  if (std::strcmp(name, "vkQueuePresentKHR") == 0 && g_vk_present)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_queue_present);
-  else if (std::strcmp(name, "vkCreateSwapchainKHR") == 0)
+  else if (std::strcmp(name, "vkCreateSwapchainKHR") == 0 && g_vk_create_swapchain)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_swapchain);
-  else if (std::strcmp(name, "vkDestroySwapchainKHR") == 0)
+  else if (std::strcmp(name, "vkDestroySwapchainKHR") == 0 && g_vk_destroy_swapchain)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_destroy_swapchain);
-  else if (std::strcmp(name, "vkCreateDevice") == 0)
+  else if (std::strcmp(name, "vkCreateDevice") == 0 && g_vk_create_device)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_device);
-  else if (std::strcmp(name, "vkCreateInstance") == 0)
+  else if (std::strcmp(name, "vkCreateInstance") == 0 && g_vk_create_instance)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_instance);
-  else if (std::strcmp(name, "vkCreateWin32SurfaceKHR") == 0)
+  else if (std::strcmp(name, "vkCreateWin32SurfaceKHR") == 0 && g_vk_create_win32_surface)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_create_win32_surface);
-  else if (std::strcmp(name, "vkGetDeviceQueue") == 0)
+  else if (std::strcmp(name, "vkGetDeviceQueue") == 0 && g_vk_get_device_queue)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_get_device_queue);
-  else if (std::strcmp(name, "vkGetInstanceProcAddr") == 0)
+  else if (std::strcmp(name, "vkGetInstanceProcAddr") == 0 && g_vk_gipa)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_get_instance_proc_addr);
-  else if (std::strcmp(name, "vkGetDeviceProcAddr") == 0)
+  else if (std::strcmp(name, "vkGetDeviceProcAddr") == 0 && g_vk_gdpa)
     wrapped = reinterpret_cast<PFN_vkVoidFunction>(&hk_vk_get_device_proc_addr);
   if (wrapped) g_vk_wrapped.store(true);
   return wrapped ? wrapped : real;

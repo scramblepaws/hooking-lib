@@ -96,7 +96,7 @@ void release_target() {
   g_buffers.clear();
 }
 
-bool init(IDXGISwapChain* sc, void* hwnd) {
+bool init(IDXGISwapChain* sc, void*) {
   if (FAILED(sc->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&g_device))) || !g_device) { log("dx12: GetDevice failed"); return false; }
   g_swapchain = sc;
 
@@ -137,11 +137,6 @@ bool init(IDXGISwapChain* sc, void* hwnd) {
     return false;
 
   if (!make_targets(sc)) { log("dx12: target creation failed"); return false; }
-
-  if (!ImGui_ImplWin32_Init(hwnd)) {
-    log("ImGui win32 backend init failed");
-    return false;
-  }
 
   ImGui_ImplDX12_InitInfo info;
   info.Device = g_device;

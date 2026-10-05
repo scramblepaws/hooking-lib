@@ -49,8 +49,16 @@ bool decode_image(const std::wstring& path, UINT& width, UINT& height, std::vect
   return ok;
 }
 
+std::wstring to_wide(const char* utf8) {
+  const int length = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+  if (length <= 1) return {};
+  std::wstring wide(static_cast<size_t>(length - 1), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide.data(), length);
+  return wide;
+}
+
 std::wstring resolve_path(const char* path) {
-  std::wstring wide(path, path + std::strlen(path));
+  std::wstring wide = to_wide(path);
   if (wide.size() >= 2 && wide[1] == L':') return wide;  // absolute drive path
   if (!wide.empty() && (wide[0] == L'\\' || wide[0] == L'/')) return wide;
   return module_directory() + L"scripts\\" + wide;

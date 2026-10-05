@@ -86,6 +86,11 @@ bool init(IDXGISwapChain* sc, void* hwnd) {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.IniFilename = nullptr;  // never write imgui.ini into the Target's directory
   ImGui::StyleColorsDark();
+  if (!ImGui_ImplWin32_Init(hwnd)) {
+    log("render: win32 backend init failed");
+    ImGui::DestroyContext();
+    return false;
+  }
 
   bool backend_ok = false;
   if (is_dx11(sc)) {
@@ -96,10 +101,11 @@ bool init(IDXGISwapChain* sc, void* hwnd) {
     backend_ok = dx12::init(sc, hwnd);
   } else {
     log("render: swapchain device is neither DX11 nor DX12");
-    return false;
   }
   if (!backend_ok) {
     g_api = Api::Unknown;
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
     return false;
   }
 
@@ -145,10 +151,17 @@ bool init_vulkan(void* hwnd, const vulkan::Target& target) {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.IniFilename = nullptr;
   ImGui::StyleColorsDark();
+  if (!ImGui_ImplWin32_Init(hwnd)) {
+    log("render: win32 backend init failed");
+    ImGui::DestroyContext();
+    return false;
+  }
 
   g_api = Api::Vulkan;
   if (!vulkan::init(hwnd, target)) {
     g_api = Api::Unknown;
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
     return false;
   }
 

@@ -39,15 +39,11 @@ void release_target() {
   }
 }
 
-bool init(IDXGISwapChain* sc, void* hwnd) {
+bool init(IDXGISwapChain* sc, void*) {
   if (FAILED(sc->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&g_device))) || !g_device) return false;
   g_device->GetImmediateContext(&g_ctx);
   if (!g_ctx || !make_target(sc)) return false;
 
-  if (!ImGui_ImplWin32_Init(hwnd)) {
-    log("ImGui win32 backend init failed");
-    return false;
-  }
   if (!ImGui_ImplDX11_Init(g_device, g_ctx)) {
     log("ImGui dx11 backend init failed");
     return false;
